@@ -24,16 +24,17 @@ This document formalizes the functional and non-functional requirements for the 
 - **FR-PUB-01: Marketing Content & Pages**:
   - The public site must present 6 distinct responsive pages: **Home**, **Services** (e.g., Roof Replacement, Roof Repair, Inspection & Maintenance, Storm Damage Restoration, Commercial Roofing), **About Us**, **Service Areas** (geographical map/list), **Contact / Request a Quote**, and **Privacy Policy**.
   - All pages must display consistent navigation headers, emergency contact badges, verified trust credentials (licenses, insurance, warranties), client testimonials, and clear call-to-action (CTA) banners.
-- **FR-PUB-02: Quote Request Intake Form**:
-  - Homeowners must be able to submit a quote request providing:
+- **FR-PUB-02: Quote Request Intake Form (Text-Only)**:
+  - Homeowners submit a text-only quote request providing:
     - Customer Full Name (Required, 2–100 chars)
     - Phone Number (Required, validated against standard phone formats)
-    - Email Address (Optional or Required depending on contact preference, validated RFC 5322)
+    - Email Address (Required for automated email receipt and follow-up, validated RFC 5322)
     - Service Type (Required, dropdown: Replacement, Repair, Inspection, Emergency Leak, Commercial, Other)
     - Property Address / City / Zip Code (Required)
-    - Project Description / Urgency Notes (Optional, max 1000 chars)
-    - Preferred Contact Method (Phone call, SMS, or Email)
-  - Must include spam mitigation (honeypot field and client submission debouncing).
+    - Project Description / Urgency Notes (Optional text, max 1000 chars)
+    - Preferred Contact Method (Phone call or Email)
+  - *Photo and document attachments are explicitly deferred to post-MVP.*
+  - Must include spam mitigation (honeypot field `_hp` and client submission debouncing).
 - **FR-PUB-03: Predefined Decision-Tree Chatbot**:
   - A persistent, floating chatbot widget available across all public pages.
   - The chatbot must present guided quick-choice questions without requiring freeform natural language parsing:
@@ -98,10 +99,10 @@ This document formalizes the functional and non-functional requirements for the 
   - Triggered by backend webhook upon successful lead database commit.
   - Validates webhook secret header and payload integrity.
   - Formats an alert email to the configured business dispatch address with customer details and urgency level.
-- **FR-AUTO-02: Customer Acknowledgement (Workflow B)**:
-  - Dispatches an automated confirmation email/SMS to the customer confirming quote receipt and outlining expected follow-up time (e.g., within 2 business hours).
-- **FR-AUTO-03: Stale Lead Follow-Up Reminder (Workflow C)**:
-  - Scheduled cron (e.g., daily at 08:00 AM) that queries leads stuck in 'New' or 'Contacted' without updates for > 48 hours and notifies staff.
+- **FR-AUTO-02: Customer Acknowledgement (Workflow B - Email Only)**:
+  - Dispatches an automated confirmation email to the customer confirming quote receipt and outlining expected follow-up time (e.g., within 2 business hours). SMS is deferred post-MVP.
+- **FR-AUTO-03: Stale Lead Follow-Up Reminder (Workflow C - Email Only)**:
+  - Scheduled cron (e.g., daily at 08:00 AM) that queries leads stuck in 'New' or 'Contacted' without updates for > 48 hours and notifies staff via email.
 
 ---
 
@@ -114,7 +115,7 @@ This document formalizes the functional and non-functional requirements for the 
 - **NFR-SEC-04**: Complete n8n UI isolation; n8n editor must not be publicly routable.
 
 ### 4.2. Reliability & Fault Tolerance
-- **NFR-REL-01 (Lead Preservation Guarantee)**: Lead records must commit to PostgreSQL before any external webhook call. If n8n or SMTP fails, the customer receives a success response, and the lead is marked for background retry.
+- **NFR-REL-01 (Transactional Outbox Guarantee)**: Lead ingestion commits the lead record and outbox event in the same database transaction. An asynchronous worker delivers events to n8n with exponential backoff and idempotency keys (`X-Idempotency-Key`). Delivery is never claimed as completed until n8n returns confirmed HTTP 200 OK.
 - **NFR-REL-02**: Database connection pooling with auto-reconnect and health checks.
 
 ### 4.3. Usability & Aesthetics
@@ -133,3 +134,6 @@ Per [Overview.md:L383-403](file:///Users/aljonfernando/Documents/roofing-lead-ma
 - Native mobile applications (iOS/Android).
 - Generative AI / LLM-powered chatbot (only rule-based decision tree is in scope).
 - Multi-tenant multi-client shared administrative portals.
+- SMS notifications (deferred; email only in MVP).
+- File/photo attachments on quote forms (deferred; text-only in MVP).
+

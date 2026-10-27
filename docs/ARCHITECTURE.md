@@ -108,9 +108,9 @@ To balance fast white-label customization with runtime operational control, conf
 
 ---
 
-## 5. Automation Architecture (Backend-to-n8n Integration)
+## 5. Automation Architecture (Transactional Outbox Pattern)
 
-The backend interacts with n8n via authenticated webhooks over an **internal Docker bridge network** (`backend_net`):
+To ensure **guaranteed lead preservation**, **zero data loss**, and **reliable at-least-once delivery**, the integration between the Express backend and n8n adopts the **Transactional Outbox Pattern**:
 
 ```mermaid
 sequenceDiagram
@@ -119,51 +119,60 @@ sequenceDiagram
     participant React as React Frontend
     participant API as Express API
     participant DB as PostgreSQL
+    participant Worker as Outbox Worker (Backend)
     participant N8N as n8n Community Engine
     actor Owner as Roofing Owner / Staff
 
-    Customer->>React: Submits Quote Form
+    Customer->>React: Submits Text-Only Quote Form
     React->>API: POST /api/v1/leads (with payload)
-    API->>API: Zod validation & sanitization
-    API->>DB: INSERT into leads (status: 'new', automation: 'pending')
-    DB-->>API: Returns saved lead with UUID
-    API-->>React: 201 Created { leadId, message: "Quote received" }
-    React-->>Customer: Displays Instant Success Screen
+    API->>API: Zod validation & honeypot check
 
-    Note over API,N8N: Asynchronous Automation Trigger
-    API->>N8N: POST /webhook/roofing-lead-created<br/>Header: X-Webhook-Secret: [SECRET]<br/>Body: { leadId, customer, service, location }
-    alt n8n Success
-        N8N->>Owner: Dispatches Email / SMS Alert
-        N8N-->>API: 200 OK { status: "received" }
-        API->>DB: UPDATE leads SET automation_status = 'delivered'
-    else n8n Failure / Timeout
-        N8N-->>API: Error / Connection Timeout
-        API->>DB: UPDATE leads SET automation_status = 'failed', retries = retries + 1
-        API->>DB: INSERT into automation_events (lead_id, error, status: 'failed')
+    rect rgb(240, 248, 255)
+        Note over API,DB: ACID Transaction (Same DB Commit)
+        API->>DB: INSERT into leads (status: 'new', automation_status: 'pending')
+        API->>DB: INSERT into outbox_events (aggregate_id: lead.id, event: 'lead.created', idempotency_key: UUID, status: 'pending')
+        DB-->>API: Transaction Committed Successfully
+    end
+
+    API-->>React: 201 Created { leadId, message: "Quote received" }
+    React-->>Customer: Displays Instant Confirmation Screen
+
+    rect rgb(255, 250, 240)
+        Note over Worker,N8N: Asynchronous Outbox Delivery Worker
+        Worker->>DB: SELECT pending events FOR UPDATE SKIP LOCKED
+        Worker->>N8N: POST /webhook/roofing-lead-created<br/>Header: X-Webhook-Secret: [SECRET]<br/>Header: X-Idempotency-Key: [UUID]<br/>Body: { leadId, customer, service, location }
+        alt n8n Confirmed Success (HTTP 200 OK)
+            N8N->>Owner: Dispatches Email Notification
+            N8N-->>Worker: 200 OK { status: "received", confirmed: true }
+            Worker->>DB: UPDATE outbox_events SET status = 'delivered', delivered_at = now()
+            Worker->>DB: UPDATE leads SET automation_status = 'delivered'
+        else n8n Failure / Network Timeout
+            Worker->>DB: UPDATE outbox_events SET status = 'pending', retry_count = retry_count + 1, next_retry_at = now() + backoff, last_error = error
+            Note over Worker,DB: Lead remains safe. Worker retries using exponential backoff (max 5 retries). Never marked 'delivered' prematurely.
+        end
     end
 ```
 
-### 5.1. n8n Deployment & Security Isolation
+### 5.1. Delivery Guarantees & Duplicate Prevention
+1. **Single ACID Transaction**: The lead record and outbox record commit together. If the database crashes, neither exists. If the database succeeds, the lead is safely stored and queued for delivery.
+2. **Delivery Confirmation**: The system **never claims automation is delivered** until n8n returns an explicit HTTP 200 OK with confirmed status.
+3. **Idempotency**: Every outbox event carries an immutable `idempotency_key` (UUID v4) sent via the `X-Idempotency-Key` header. If network timeouts cause a retry, n8n uses this key to deduplicate executions, preventing duplicate customer or staff emails.
+4. **Concurrency Safety**: The worker processes events using `SELECT ... FOR UPDATE SKIP LOCKED`, preventing multiple worker ticks or processes from duplicating in-flight requests.
+5. **Exponential Backoff**: Failed delivery attempts retry with exponential backoff (`30s`, `1m`, `2m`, `5m`, `15m`). If `retry_count >= max_retries`, the event transitions to `'failed'` and triggers a high-priority system alert in the dashboard.
+
+### 5.2. n8n Deployment & Security Isolation
 - The n8n Webhook node listens only on the internal Docker network or behind an authenticated internal proxy route.
 - The n8n web editor UI is **never exposed directly to the public internet**. Access for workflow adjustments is restricted to `127.0.0.1` via SSH tunneling or basic-auth protected internal endpoints.
 
 ---
 
-## 6. Assumptions & Unresolved Questions
+## 6. Scope Clarifications & Resolved Architectural Decisions
 
-### 6.1. Architectural Assumptions
-1. **Deployment Footprint**: Each client's production deployment runs on a modest VPS (2 vCPU, 4GB RAM minimum to comfortably host PostgreSQL, Node.js, and n8n).
-2. **Email Provider**: The client will supply SMTP credentials or API keys (e.g., SendGrid, Postmark, AWS SES, or Brevo) configured inside n8n credential stores for sending customer and staff emails.
-3. **Internal Chatbot Logic**: The MVP chatbot operates as a rule-based decision tree embedded in the frontend, requiring zero external LLM API costs or token latencies.
+### 6.1. Resolved MVP Scope Decisions
+1. **Notification Channels**: **Email notifications only** in the MVP for both staff alerts and customer acknowledgements. SMS notifications (e.g., Twilio) are deferred to post-MVP.
+2. **Quote Form Intake**: **Text-only quote requests** in the MVP. Photo/file attachments are deferred to avoid early multi-part storage and S3 configuration overhead.
+3. **Multi-Tenant Model**: Strictly **single-tenant per deployment**. Each roofing company receives a dedicated Docker Compose stack and isolated PostgreSQL database.
+4. **Backend Stack**: Express with TypeScript, Zod validation, and Drizzle ORM.
+5. **Session Management**: PostgreSQL-backed sessions (`connect-pg-simple`) with `HttpOnly`, `SameSite=Lax`, and `Secure` cookies.
+6. **Authentication**: Closed registration. Owner/Admin and Staff roles seeded or managed by admins.
 
-### 6.2. Decisions Resolved in Milestone 1
-- **Backend**: Express + TypeScript.
-- **ORM**: Drizzle ORM with version-controlled migrations.
-- **Sessions**: Express-session with PostgreSQL session store (`connect-pg-simple`).
-- **Validation**: Zod across API and environment variables.
-- **Repository**: Single monorepo containing `frontend/`, `backend/`, and shared types.
-- **User Management**: Individual accounts with Owner/Admin and Staff roles; no self-registration.
-
-### 6.3. Unresolved Questions for User Review
-1. **SMS Notifications**: Should n8n lead alerts to the business owner include SMS (e.g., Twilio) in the MVP, or is email notification sufficient for initial release?
-2. **Static Asset Storage**: Are company logo uploads and lead photo attachments stored locally on Docker persistent volumes, or will an S3-compatible object store (e.g., Cloudflare R2, AWS S3) be configured? (Default assumption for MVP: local persistent volume).

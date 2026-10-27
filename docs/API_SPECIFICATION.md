@@ -361,20 +361,22 @@ Appends a timestamped follow-up note to a lead.
 
 ---
 
-## 5. Backend-to-n8n Webhook Contract
+## 5. Backend-to-n8n Webhook Contract (Transactional Outbox)
 
-Outbound HTTP POST initiated by the backend service to trigger n8n workflows over the internal Docker network.
+Outbound HTTP POST initiated by the backend Outbox Worker to trigger n8n workflows over the internal Docker network.
 
 - **Method**: `POST`
 - **URL**: `${N8N_INTERNAL_URL}/webhook/roofing-lead-created`
 - **Headers**:
   - `Content-Type: application/json`
   - `X-Webhook-Secret: [Configured N8N_WEBHOOK_SECRET]`
+  - `X-Idempotency-Key: [UUID v4 from outbox_events table]`
 - **Payload Schema**:
 ```json
 {
   "eventId": "e98e4d29-14a5-48b0-8c29-37fbe01ba321",
-  "eventType": "lead_created",
+  "eventType": "lead.created",
+  "idempotencyKey": "9d903e05-2b44-48f8-bca7-ec902b77543a",
   "timestamp": "2026-10-27T14:30:00.000Z",
   "lead": {
     "id": "7b3b3a62-4217-48f8-b118-2ad16a69df4a",
@@ -395,4 +397,12 @@ Outbound HTTP POST initiated by the backend service to trigger n8n workflows ove
   }
 }
 ```
-- **Expected Response**: `200 OK` with JSON body `{"status": "received"}` within 5000ms.
+- **Expected Response**: `200 OK` with JSON body:
+```json
+{
+  "status": "received",
+  "confirmed": true
+}
+```
+- **Delivery Guarantee**: The outbox event and lead `automation_status` are only updated to `'delivered'` after the backend receives HTTP 200 OK with `confirmed: true`. In the event of a timeout or 5xx error, the worker retries using the same `X-Idempotency-Key` and exponential backoff.
+

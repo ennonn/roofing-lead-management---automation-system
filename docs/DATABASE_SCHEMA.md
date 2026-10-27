@@ -18,7 +18,7 @@ The data tier is powered by **PostgreSQL 16**, managed through **Drizzle ORM** w
 erDiagram
     users ||--o{ lead_notes : "writes"
     leads ||--o{ lead_notes : "contains"
-    leads ||--o{ automation_events : "triggers"
+    leads ||--o{ outbox_events : "generates"
     users ||--o{ sessions : "establishes"
 
     users {
@@ -63,7 +63,6 @@ erDiagram
         varchar lead_source
         varchar status "new | contacted | estimate_scheduled | won | lost"
         varchar automation_status "pending | delivered | failed"
-        integer automation_retries
         timestamptz submission_date
         timestamptz last_status_update
         timestamptz created_at
@@ -78,14 +77,19 @@ erDiagram
         timestamptz created_at
     }
 
-    automation_events {
+    outbox_events {
         uuid id PK
-        uuid lead_id FK
-        varchar event_type
+        varchar aggregate_type "lead"
+        uuid aggregate_id FK
+        varchar event_type "lead.created"
         jsonb payload
-        varchar status "queued | success | failed"
-        integer response_code
-        text error_message
+        varchar status "pending | processing | delivered | failed"
+        uuid idempotency_key UK
+        integer retry_count
+        integer max_retries
+        timestamptz next_retry_at
+        timestamptz delivered_at
+        text last_error
         timestamptz created_at
     }
 ```
@@ -197,19 +201,29 @@ Follow-up log entries added by staff members to record phone calls, inspections,
 
 ---
 
-### 3.6. `automation_events` Table
-Audit trail of outbound webhook calls from the backend to n8n.
+### 3.6. `outbox_events` Table (Transactional Outbox)
+Durable queue for asynchronous webhook dispatch to n8n. Records are inserted in the exact same database transaction as the lead.
 
 | Column | Data Type | Nullable | Default | Description |
 | :--- | :--- | :--- | :--- | :--- |
 | `id` | `UUID` | No | `gen_random_uuid()` | Primary Key |
-| `lead_id` | `UUID` | No | - | Foreign Key -> `leads(id)` ON DELETE CASCADE |
-| `event_type` | `VARCHAR(50)` | No | `'lead_created'` | Event type name |
-| `payload` | `JSONB` | No | - | Exact JSON payload sent to webhook |
-| `status` | `VARCHAR(20)` | No | `'queued'` | `'queued'`, `'success'`, or `'failed'` |
-| `response_code` | `INTEGER` | Yes | `NULL` | HTTP response code from n8n |
-| `error_message` | `TEXT` | Yes | `NULL` | Error details if webhook failed |
-| `created_at` | `TIMESTAMPTZ` | No | `now()` | Event dispatch timestamp |
+| `aggregate_type` | `VARCHAR(50)` | No | `'lead'` | Aggregate entity type |
+| `aggregate_id` | `UUID` | No | - | Foreign Key -> `leads(id)` ON DELETE CASCADE |
+| `event_type` | `VARCHAR(50)` | No | `'lead.created'` | Event name |
+| `payload` | `JSONB` | No | - | Normalized event payload dispatched to webhook |
+| `status` | `VARCHAR(20)` | No | `'pending'` | `'pending'`, `'processing'`, `'delivered'`, or `'failed'` |
+| `idempotency_key` | `UUID` | No | `gen_random_uuid()` | Unique key sent in `X-Idempotency-Key` header |
+| `retry_count` | `INTEGER` | No | `0` | Consecutive failure attempts |
+| `max_retries` | `INTEGER` | No | `5` | Maximum delivery attempts |
+| `next_retry_at` | `TIMESTAMPTZ` | No | `now()` | Earliest timestamp for next retry attempt |
+| `delivered_at` | `TIMESTAMPTZ` | Yes | `NULL` | Timestamp when n8n confirmed receipt (200 OK) |
+| `last_error` | `TEXT` | Yes | `NULL` | Last delivery failure message |
+| `created_at` | `TIMESTAMPTZ` | No | `now()` | Event creation timestamp |
+
+**Indexes & Constraints**:
+- `outbox_events_pkey`: `PRIMARY KEY (id)`
+- `outbox_events_idempotency_unique`: `UNIQUE (idempotency_key)`
+- `idx_outbox_events_dispatch`: `INDEX (status, next_retry_at)` (optimized for polling pending deliveries)
 
 ---
 
@@ -270,7 +284,6 @@ export const leads = pgTable("leads", {
   leadSource: varchar("lead_source", { length: 50 }).notNull().default("website_form"),
   status: varchar("status", { length: 30 }).notNull().default("new"), // 'new' | 'contacted' | 'estimate_scheduled' | 'won' | 'lost'
   automationStatus: varchar("automation_status", { length: 20 }).notNull().default("pending"),
-  automationRetries: integer("automation_retries").notNull().default(0),
   submissionDate: timestamp("submission_date", { withTimezone: true }).notNull().defaultNow(),
   lastStatusUpdate: timestamp("last_status_update", { withTimezone: true }).notNull().defaultNow(),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
@@ -292,26 +305,37 @@ export const leadNotes = pgTable("lead_notes", {
   leadIdIdx: index("idx_lead_notes_lead_id").on(table.leadId, table.createdAt),
 }));
 
-// 6. Automation Events
-export const automationEvents = pgTable("automation_events", {
+// 6. Outbox Events (Transactional Outbox)
+export const outboxEvents = pgTable("outbox_events", {
   id: uuid("id").primaryKey().defaultRandom(),
-  leadId: uuid("lead_id").notNull().references(() => leads.id, { onDelete: "cascade" }),
-  eventType: varchar("event_type", { length: 50 }).notNull().default("lead_created"),
+  aggregateType: varchar("aggregate_type", { length: 50 }).notNull().default("lead"),
+  aggregateId: uuid("aggregate_id").notNull().references(() => leads.id, { onDelete: "cascade" }),
+  eventType: varchar("event_type", { length: 50 }).notNull().default("lead.created"),
   payload: jsonb("payload").notNull(),
-  status: varchar("status", { length: 20 }).notNull().default("queued"),
-  responseCode: integer("response_code"),
-  errorMessage: text("error_message"),
+  status: varchar("status", { length: 20 }).notNull().default("pending"), // 'pending' | 'processing' | 'delivered' | 'failed'
+  idempotencyKey: uuid("idempotency_key").notNull().defaultRandom().unique(),
+  retryCount: integer("retry_count").notNull().default(0),
+  maxRetries: integer("max_retries").notNull().default(5),
+  nextRetryAt: timestamp("next_retry_at", { withTimezone: true }).notNull().defaultNow(),
+  deliveredAt: timestamp("delivered_at", { withTimezone: true }),
+  lastError: text("last_error"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-});
+}, (table) => ({
+  dispatchIdx: index("idx_outbox_events_dispatch").on(table.status, table.nextRetryAt),
+}));
 
 // Relationships
 export const leadsRelations = relations(leads, ({ many }) => ({
   notes: many(leadNotes),
-  events: many(automationEvents),
+  outboxEvents: many(outboxEvents),
 }));
 
 export const leadNotesRelations = relations(leadNotes, ({ one }) => ({
   lead: one(leads, { fields: [leadNotes.leadId], references: [leads.id] }),
   author: one(users, { fields: [leadNotes.authorId], references: [users.id] }),
+}));
+
+export const outboxEventsRelations = relations(outboxEvents, ({ one }) => ({
+  lead: one(leads, { fields: [outboxEvents.aggregateId], references: [leads.id] }),
 }));
 ```
