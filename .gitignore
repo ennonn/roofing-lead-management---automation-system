@@ -1,0 +1,51 @@
+# Dependencies
+node_modules/
+.pnp/
+.pnp.js
+
+# Build and distribution
+dist/
+build/
+out/
+.turbo/
+coverage/
+*.tsbuildinfo
+
+# Environment and secrets (CRITICAL: never commit real secrets)
+.env
+.env.*
+!.env.example
+
+# Database and persistence volumes
+postgres_data/
+n8n_data/
+*.sqlite
+*.sqlite-journal
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Runtime / Temp / Scratch files
+uploads/
+tmp/
+temp/
+scratch/
+
+# Operating System files
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+
+# IDE and Editor files
+.idea/
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json
+*.sublime-workspace
+*.sublime-project
