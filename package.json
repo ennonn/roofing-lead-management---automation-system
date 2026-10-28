@@ -1,0 +1,31 @@
+{
+  "name": "roofing-lead-management-system",
+  "version": "1.0.0",
+  "private": true,
+  "description": "White-label roofing website and lead management automation system",
+  "workspaces": [
+    "packages/*",
+    "backend",
+    "frontend"
+  ],
+  "scripts": {
+    "build": "npm run build --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present",
+    "backend:dev": "npm run dev --workspace=backend",
+    "backend:build": "npm run build --workspace=backend",
+    "backend:test": "npm run test --workspace=backend",
+    "frontend:dev": "npm run dev --workspace=frontend",
+    "frontend:build": "npm run build --workspace=frontend",
+    "frontend:test": "npm run test --workspace=frontend"
+  },
+  "keywords": [
+    "roofing",
+    "lead-management",
+    "automation",
+    "n8n",
+    "drizzle-orm",
+    "express"
+  ],
+  "author": "",
+  "license": "UNLICENSED"
+}

@@ -1,0 +1,34 @@
+{
+  "version": "7",
+  "dialect": "postgresql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "7",
+      "when": 1793109665904,
+      "tag": "0000_peaceful_killmonger",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1793116676110,
+      "tag": "0001_uneven_joshua_kane",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1793117356677,
+      "tag": "0002_bent_liz_osborn",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1793118000000,
+      "tag": "0003_n8n_claim_functions",
+      "breakpoints": true
+    }
+  ]
+}

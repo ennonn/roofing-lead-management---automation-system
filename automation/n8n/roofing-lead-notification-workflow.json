@@ -1,0 +1,875 @@
+{
+  "name": "Roofing Lead Notification & Deduplication Workflow",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "roofing-lead-created",
+        "responseMode": "responseNode",
+        "authentication": "headerAuth",
+        "options": {}
+      },
+      "id": "node-webhook-trigger",
+      "name": "Webhook: Lead Created",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        100,
+        300
+      ],
+      "webhookId": "roofing-lead-created",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "HEADER_AUTH_CREDENTIAL_ID",
+          "name": "Roofing Webhook Auth"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Extract headers and body\nconst item = $input.first();\nconst headers = item.json.headers || {};\nconst body = item.json.body || {};\n\n// 1. Verify header presence (authentication is enforced natively at Webhook boundary via Header Auth credential)\nconst receivedSecret = headers['x-webhook-secret'] || headers['X-Webhook-Secret'];\nif (!receivedSecret) {\n  return [{\n    json: {\n      isValid: false,\n      statusCode: 401,\n      errorCode: 'UNAUTHORIZED',\n      errorMessage: 'Invalid or missing X-Webhook-Secret authentication header'\n    }\n  }];\n}\n\n// 2. Strict UUID v4 regex validation for Idempotency Key\nconst idempotencyKey = String(headers['x-idempotency-key'] || headers['X-Idempotency-Key'] || '').trim();\nconst uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;\nif (!uuidRegex.test(idempotencyKey)) {\n  return [{\n    json: {\n      isValid: false,\n      statusCode: 422,\n      errorCode: 'INVALID_IDEMPOTENCY_KEY',\n      errorMessage: 'X-Idempotency-Key must be a valid UUID string'\n    }\n  }];\n}\n\n// 3. Strict UUID v4 regex validation for Lead ID\nconst leadId = String(body.leadId || '').trim();\nif (!uuidRegex.test(leadId)) {\n  return [{\n    json: {\n      isValid: false,\n      statusCode: 422,\n      errorCode: 'INVALID_LEAD_ID',\n      errorMessage: 'leadId must be a valid UUID string'\n    }\n  }];\n}\n\n// 4. Validate and Sanitize Required Lead Payload Fields\nconst customerName = String(body.customerName || '').trim();\nconst phone = String(body.phone || '').trim();\nconst serviceType = String(body.serviceType || '').trim();\nconst propertyLocation = String(body.propertyLocation || '').trim();\n\nif (!customerName || !phone || !serviceType || !propertyLocation) {\n  return [{\n    json: {\n      isValid: false,\n      statusCode: 422,\n      errorCode: 'INVALID_PAYLOAD',\n      errorMessage: 'Missing required payload fields: customerName, phone, serviceType, or propertyLocation'\n    }\n  }];\n}\n\n// 5. Sanitize Optional & Operational Metadata Fields\nconst email = body.email ? String(body.email).trim() : null;\nconst projectDescription = String(body.projectDescription || '').trim();\nconst preferredContactMethod = String(body.preferredContactMethod || 'phone').trim();\nconst leadSource = String(body.leadSource || 'website_quote_form').trim();\nconst submissionDate = body.submissionDate ? String(body.submissionDate).trim() : new Date().toISOString();\nconst companyName = String(body.companyName || 'Apex Roofing Solutions').trim();\nconst dispatchEmail = String(body.dispatchEmail || 'dispatch@roofingcompany.com').trim();\nconst staffNotificationEmail = String(body.staffNotificationEmail || 'leads@roofingcompany.com').trim();\n\nreturn [{\n  json: {\n    isValid: true,\n    idempotencyKey,\n    leadId,\n    customerName,\n    phone,\n    email,\n    serviceType,\n    propertyLocation,\n    projectDescription,\n    preferredContactMethod,\n    leadSource,\n    submissionDate,\n    companyName,\n    dispatchEmail,\n    staffNotificationEmail\n  }\n}];"
+      },
+      "id": "node-validate-auth",
+      "name": "Validate & Authenticate Request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        320,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "c-valid",
+              "leftValue": "={{ $json.isValid }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "node-if-valid",
+      "name": "Is Request Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        540,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={\n  \"success\": false,\n  \"error\": {\n    \"code\": \"{{ $json.errorCode }}\",\n    \"message\": \"{{ $json.errorMessage }}\"\n  }\n}",
+        "options": {
+          "responseCode": "={{ $json.statusCode }}"
+        }
+      },
+      "id": "node-respond-4xx",
+      "name": "Respond: 4xx Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        760,
+        140
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT * FROM acquire_n8n_lead_claim($1::uuid, $2::uuid);",
+        "options": {
+          "queryReplacement": "={{ [$('Validate & Authenticate Request').item.json.idempotencyKey, $('Validate & Authenticate Request').item.json.leadId] }}"
+        }
+      },
+      "id": "node-postgres-acquire-claim",
+      "name": "Postgres: Acquire Atomic Claim",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        760,
+        420
+      ],
+      "alwaysOutputData": true,
+      "credentials": {
+        "postgres": {
+          "id": "POSTGRES_CREDENTIAL_ID",
+          "name": "Production Roofing PostgreSQL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "c-acquired",
+              "leftValue": "={{ $json.claim_status }}",
+              "rightValue": "CLAIM_ACQUIRED",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "node-if-acquired",
+      "name": "Is Claim Acquired?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1020,
+        420
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "c-completed",
+              "leftValue": "={{ $json.claim_status }}",
+              "rightValue": "ALREADY_COMPLETED",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "node-if-completed",
+      "name": "Is Already Completed?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1260,
+        240
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={\n  \"success\": true,\n  \"status\": \"already_processed\",\n  \"idempotencyKey\": \"{{ $('Validate & Authenticate Request').item.json.idempotencyKey }}\",\n  \"leadId\": \"{{ $('Validate & Authenticate Request').item.json.leadId }}\",\n  \"message\": \"Event previously completed. Duplicate notification suppressed.\"\n}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "node-respond-duplicate",
+      "name": "Respond: Duplicate Acknowledged (200)",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1520,
+        160
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "c-locked",
+              "leftValue": "={{ $json.claim_status }}",
+              "rightValue": "CONCURRENT_LOCKED",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "node-if-locked",
+      "name": "Is In-Flight Locked?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1520,
+        320
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={\n  \"success\": false,\n  \"status\": \"in_flight\",\n  \"idempotencyKey\": \"{{ $('Validate & Authenticate Request').item.json.idempotencyKey }}\",\n  \"leadId\": \"{{ $('Validate & Authenticate Request').item.json.leadId }}\",\n  \"message\": \"Event is currently being processed by another worker lease. Retry later if not completed.\"\n}",
+        "options": {
+          "responseCode": 409
+        }
+      },
+      "id": "node-respond-concurrent-409",
+      "name": "Respond: In-Flight Lock (409)",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1780,
+        260
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={\n  \"success\": false,\n  \"status\": \"claim_rejected\",\n  \"idempotencyKey\": \"{{ $('Validate & Authenticate Request').item.json.idempotencyKey }}\",\n  \"leadId\": \"{{ $('Validate & Authenticate Request').item.json.leadId }}\",\n  \"message\": \"Claim outcome could not be deterministically confirmed. Failing closed to prevent duplicate processing.\"\n}",
+        "options": {
+          "responseCode": 409
+        }
+      },
+      "id": "node-respond-claim-rejected",
+      "name": "Respond: Ambiguous Claim Rejected (409)",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1780,
+        380
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "c-staff-needed",
+              "leftValue": "={{ Boolean($json.staff_notified) }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "notEquals"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "node-if-staff-needed",
+      "name": "Is Staff Alert Needed?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1260,
+        560
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT * FROM verify_and_renew_n8n_claim($1::uuid, $2::integer);",
+        "options": {
+          "queryReplacement": "={{ [$('Validate & Authenticate Request').item.json.idempotencyKey, $('Postgres: Acquire Atomic Claim').item.json.claim_version] }}"
+        }
+      },
+      "id": "node-postgres-verify-staff",
+      "name": "Postgres: Pre-Flight Check & Renew Lease (Staff)",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        1520,
+        500
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "POSTGRES_CREDENTIAL_ID",
+          "name": "Production Roofing PostgreSQL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "c-staff-lease",
+              "leftValue": "={{ Boolean($json.is_valid) }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "node-if-staff-lease-valid",
+      "name": "Is Staff Lease Active?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1780,
+        500
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={\n  \"success\": false,\n  \"status\": \"stale_execution_aborted\",\n  \"idempotencyKey\": \"{{ $('Validate & Authenticate Request').item.json.idempotencyKey }}\",\n  \"message\": \"Lease expired or reclaimed by another processor before staff notification. External side effect aborted.\"\n}",
+        "options": {
+          "responseCode": 409
+        }
+      },
+      "id": "node-respond-stale-staff",
+      "name": "Respond: Stale Lease Aborted (Staff 409)",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        2040,
+        420
+      ]
+    },
+    {
+      "parameters": {
+        "fromEmail": "={{ $('Validate & Authenticate Request').item.json.dispatchEmail || 'dispatch@roofingcompany.com' }}",
+        "toEmail": "={{ $('Validate & Authenticate Request').item.json.staffNotificationEmail || 'leads@roofingcompany.com' }}",
+        "subject": "=New Quote Lead: [{{ $('Validate & Authenticate Request').item.json.serviceType }}] - {{ $('Validate & Authenticate Request').item.json.customerName }}",
+        "text": "=NEW ROOFING LEAD RECEIVED\n\nCustomer: {{ $('Validate & Authenticate Request').item.json.customerName }}\nPhone: {{ $('Validate & Authenticate Request').item.json.phone }}\nEmail: {{ $('Validate & Authenticate Request').item.json.email || 'None Provided' }}\nPreferred Contact: {{ $('Validate & Authenticate Request').item.json.preferredContactMethod }}\nService Requested: {{ $('Validate & Authenticate Request').item.json.serviceType }}\nProperty Location: {{ $('Validate & Authenticate Request').item.json.propertyLocation }}\n\nProject Description:\n{{ $('Validate & Authenticate Request').item.json.projectDescription || 'No description provided.' }}\n\nLead ID: {{ $('Validate & Authenticate Request').item.json.leadId }}\nSubmitted: {{ $('Validate & Authenticate Request').item.json.submissionDate }}",
+        "options": {}
+      },
+      "id": "node-email-staff",
+      "name": "Email: Staff Dispatch Alert",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [
+        2040,
+        540
+      ],
+      "credentials": {
+        "smtp": {
+          "id": "SMTP_CREDENTIAL_ID",
+          "name": "Roofing Company SMTP"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE n8n_processed_events SET staff_notified = true, updated_at = now() WHERE idempotency_key = $1::uuid AND claim_version = $2::integer;",
+        "options": {
+          "queryReplacement": "={{ [$('Validate & Authenticate Request').item.json.idempotencyKey, $('Postgres: Acquire Atomic Claim').item.json.claim_version] }}"
+        }
+      },
+      "id": "node-postgres-mark-staff",
+      "name": "Postgres: Mark Staff Notified",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        2260,
+        540
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "POSTGRES_CREDENTIAL_ID",
+          "name": "Production Roofing PostgreSQL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "c-cust-email",
+              "leftValue": "={{ Boolean($('Validate & Authenticate Request').item.json.email) }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            },
+            {
+              "id": "c-cust-not-notified",
+              "leftValue": "={{ Boolean($('Postgres: Acquire Atomic Claim').item.json.customer_notified) }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "notEquals"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "node-if-customer-needed",
+      "name": "Is Customer Ack Needed?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2500,
+        620
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT * FROM verify_and_renew_n8n_claim($1::uuid, $2::integer);",
+        "options": {
+          "queryReplacement": "={{ [$('Validate & Authenticate Request').item.json.idempotencyKey, $('Postgres: Acquire Atomic Claim').item.json.claim_version] }}"
+        }
+      },
+      "id": "node-postgres-verify-customer",
+      "name": "Postgres: Pre-Flight Check & Renew Lease (Customer)",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        2740,
+        540
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "POSTGRES_CREDENTIAL_ID",
+          "name": "Production Roofing PostgreSQL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "c-cust-lease",
+              "leftValue": "={{ Boolean($json.is_valid) }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "node-if-customer-lease-valid",
+      "name": "Is Customer Lease Active?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2980,
+        540
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={\n  \"success\": false,\n  \"status\": \"stale_execution_aborted\",\n  \"idempotencyKey\": \"{{ $('Validate & Authenticate Request').item.json.idempotencyKey }}\",\n  \"message\": \"Lease expired or reclaimed by another processor before customer notification. External side effect aborted.\"\n}",
+        "options": {
+          "responseCode": 409
+        }
+      },
+      "id": "node-respond-stale-customer",
+      "name": "Respond: Stale Lease Aborted (Customer 409)",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        3220,
+        460
+      ]
+    },
+    {
+      "parameters": {
+        "fromEmail": "={{ $('Validate & Authenticate Request').item.json.dispatchEmail || 'contact@roofingcompany.com' }}",
+        "toEmail": "={{ $('Validate & Authenticate Request').item.json.email }}",
+        "subject": "=We Received Your Roofing Estimate Request - {{ $('Validate & Authenticate Request').item.json.companyName || 'Roofing Team' }}",
+        "text": "=Hello {{ $('Validate & Authenticate Request').item.json.customerName }},\n\nThank you for reaching out to us. We have received your request for {{ $('Validate & Authenticate Request').item.json.serviceType }}.\n\nOur estimators will review your property location and project details and reach out via {{ $('Validate & Authenticate Request').item.json.preferredContactMethod }} shortly.\n\nProject Summary:\n- Service: {{ $('Validate & Authenticate Request').item.json.serviceType }}\n- Property: {{ $('Validate & Authenticate Request').item.json.propertyLocation }}\n- Reference ID: {{ $('Validate & Authenticate Request').item.json.leadId }}\n\nIf you have an urgent active leak, please call our dispatch team directly.\n\nSincerely,\n{{ $('Validate & Authenticate Request').item.json.companyName || 'Roofing Team' }}",
+        "options": {}
+      },
+      "id": "node-email-customer",
+      "name": "Email: Customer Acknowledgement",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [
+        3220,
+        580
+      ],
+      "credentials": {
+        "smtp": {
+          "id": "SMTP_CREDENTIAL_ID",
+          "name": "Roofing Company SMTP"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE n8n_processed_events SET customer_notified = true, updated_at = now() WHERE idempotency_key = $1::uuid AND claim_version = $2::integer;",
+        "options": {
+          "queryReplacement": "={{ [$('Validate & Authenticate Request').item.json.idempotencyKey, $('Postgres: Acquire Atomic Claim').item.json.claim_version] }}"
+        }
+      },
+      "id": "node-postgres-mark-customer",
+      "name": "Postgres: Mark Customer Notified",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        3440,
+        580
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "POSTGRES_CREDENTIAL_ID",
+          "name": "Production Roofing PostgreSQL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE n8n_processed_events SET status = 'completed', processed_at = now(), updated_at = now() WHERE idempotency_key = $1::uuid AND claim_version = $2::integer RETURNING idempotency_key, lead_id, status, processed_at;",
+        "options": {
+          "queryReplacement": "={{ [$('Validate & Authenticate Request').item.json.idempotencyKey, $('Postgres: Acquire Atomic Claim').item.json.claim_version] }}"
+        }
+      },
+      "id": "node-postgres-mark-completed",
+      "name": "Postgres: Mark Completed",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        3680,
+        620
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "POSTGRES_CREDENTIAL_ID",
+          "name": "Production Roofing PostgreSQL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={\n  \"success\": true,\n  \"status\": \"received\",\n  \"confirmed\": true,\n  \"idempotencyKey\": \"{{ $('Validate & Authenticate Request').item.json.idempotencyKey }}\",\n  \"leadId\": \"{{ $('Validate & Authenticate Request').item.json.leadId }}\",\n  \"processedAt\": \"{{ $now.toISO() }}\"\n}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "node-respond-success",
+      "name": "Respond: Success (200)",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        3920,
+        620
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook: Lead Created": {
+      "main": [
+        [
+          {
+            "node": "Validate & Authenticate Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate & Authenticate Request": {
+      "main": [
+        [
+          {
+            "node": "Is Request Valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Request Valid?": {
+      "main": [
+        [
+          {
+            "node": "Postgres: Acquire Atomic Claim",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond: 4xx Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Postgres: Acquire Atomic Claim": {
+      "main": [
+        [
+          {
+            "node": "Is Claim Acquired?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Claim Acquired?": {
+      "main": [
+        [
+          {
+            "node": "Is Staff Alert Needed?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Is Already Completed?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Already Completed?": {
+      "main": [
+        [
+          {
+            "node": "Respond: Duplicate Acknowledged (200)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Is In-Flight Locked?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is In-Flight Locked?": {
+      "main": [
+        [
+          {
+            "node": "Respond: In-Flight Lock (409)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond: Ambiguous Claim Rejected (409)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Staff Alert Needed?": {
+      "main": [
+        [
+          {
+            "node": "Postgres: Pre-Flight Check & Renew Lease (Staff)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Is Customer Ack Needed?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Postgres: Pre-Flight Check & Renew Lease (Staff)": {
+      "main": [
+        [
+          {
+            "node": "Is Staff Lease Active?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Staff Lease Active?": {
+      "main": [
+        [
+          {
+            "node": "Email: Staff Dispatch Alert",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond: Stale Lease Aborted (Staff 409)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Email: Staff Dispatch Alert": {
+      "main": [
+        [
+          {
+            "node": "Postgres: Mark Staff Notified",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Postgres: Mark Staff Notified": {
+      "main": [
+        [
+          {
+            "node": "Is Customer Ack Needed?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Customer Ack Needed?": {
+      "main": [
+        [
+          {
+            "node": "Postgres: Pre-Flight Check & Renew Lease (Customer)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Postgres: Mark Completed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Postgres: Pre-Flight Check & Renew Lease (Customer)": {
+      "main": [
+        [
+          {
+            "node": "Is Customer Lease Active?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Customer Lease Active?": {
+      "main": [
+        [
+          {
+            "node": "Email: Customer Acknowledgement",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond: Stale Lease Aborted (Customer 409)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Email: Customer Acknowledgement": {
+      "main": [
+        [
+          {
+            "node": "Postgres: Mark Customer Notified",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Postgres: Mark Customer Notified": {
+      "main": [
+        [
+          {
+            "node": "Postgres: Mark Completed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Postgres: Mark Completed": {
+      "main": [
+        [
+          {
+            "node": "Respond: Success (200)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveExecutionProgress": true,
+    "saveManualExecutions": true,
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all"
+  }
+}

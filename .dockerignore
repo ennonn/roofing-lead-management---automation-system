@@ -1,0 +1,26 @@
+# Version control and agent config
+.git
+.gitignore
+.agents
+.gemini
+
+# Dependencies and caches
+node_modules
+npm-debug.log*
+.npm
+
+# Local build artifacts (will be generated inside container)
+dist
+coverage
+.turbo
+
+# Local environment and secret files
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# OS files
+.DS_Store
+Thumbs.db

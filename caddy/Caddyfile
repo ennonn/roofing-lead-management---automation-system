@@ -1,0 +1,31 @@
+{
+    admin off
+}
+
+{$DOMAIN_NAME:localhost} {
+    encode gzip zstd
+
+    # API endpoints routed to Express backend
+    handle /api/* {
+        reverse_proxy backend:5000
+    }
+
+    # Backend liveness / health probe
+    handle /health {
+        reverse_proxy backend:5000
+    }
+
+    # Static frontend SPA routed to Nginx container
+    handle {
+        reverse_proxy frontend:80
+    }
+
+    # Security Headers
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains"
+        X-Content-Type-Options "nosniff"
+        X-Frame-Options "DENY"
+        Referrer-Policy "strict-origin-when-cross-origin"
+        -Server
+    }
+}

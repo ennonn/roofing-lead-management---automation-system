@@ -1,0 +1,185 @@
+services:
+  # ============================================================================
+  # 1. Reverse Proxy & Edge TLS (Caddy)
+  # ============================================================================
+  proxy:
+    image: caddy:2-alpine
+    container_name: ${COMPOSE_PROJECT_NAME:-roofing}-proxy
+    restart: unless-stopped
+    ports:
+      - "${HTTP_PORT:-80}:80"
+      - "${HTTPS_PORT:-443}:443"
+    volumes:
+      - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    environment:
+      DOMAIN_NAME: ${DOMAIN_NAME:-localhost}
+    depends_on:
+      frontend:
+        condition: service_healthy
+      backend:
+        condition: service_healthy
+    networks:
+      - frontend_net
+
+  # ============================================================================
+  # 2. Frontend Static SPA (Nginx Alpine)
+  # ============================================================================
+  frontend:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+      args:
+        VITE_API_BASE_URL: ${VITE_API_BASE_URL:-/api/v1}
+        VITE_COMPANY_NAME: ${COMPANY_NAME:-Apex Roofing Solutions}
+        VITE_COMPANY_TAGLINE: ${COMPANY_TAGLINE:-Professional Roofing & Storm Damage Restoration}
+        VITE_DEFAULT_PHONE: ${COMPANY_PHONE:-(555) 123-4567}
+        VITE_EMERGENCY_PHONE: ${COMPANY_EMERGENCY_PHONE:-(555) 999-HELP}
+        VITE_DEFAULT_EMAIL: ${COMPANY_EMAIL:-contact@apexroofingexample.com}
+        VITE_COMPANY_ADDRESS: ${COMPANY_ADDRESS:-100 Commercial Pkwy, Suite 200, Metro Area}
+        VITE_COMPANY_LICENSE: ${COMPANY_LICENSE:-ROOF-LIC-10928}
+        VITE_SERVICE_AREAS: ${COMPANY_SERVICE_AREAS:-Metro Area, North County, South County, East Suburbs, West Suburbs}
+    container_name: ${COMPOSE_PROJECT_NAME:-roofing}-frontend
+    restart: unless-stopped
+    networks:
+      - frontend_net
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:80/healthz"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+
+  # ============================================================================
+  # 3. Backend REST API & Outbox Worker (Node.js 22 Alpine)
+  # ============================================================================
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    container_name: ${COMPOSE_PROJECT_NAME:-roofing}-backend
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      PORT: 5000
+      API_PREFIX: /api/v1
+      CLIENT_ORIGIN: ${CLIENT_ORIGIN:-http://localhost}
+      POSTGRES_HOST: db
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: ${POSTGRES_DB:-roofing_leads}
+      POSTGRES_USER: ${POSTGRES_USER:-roofing_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      SESSION_SECRET: ${SESSION_SECRET}
+      SESSION_NAME: ${SESSION_NAME:-roofing_sid}
+      SESSION_MAX_AGE_HOURS: ${SESSION_MAX_AGE_HOURS:-24}
+      COOKIE_SECURE: ${COOKIE_SECURE:-true}
+      RATE_LIMIT_WINDOW_MS: ${RATE_LIMIT_WINDOW_MS:-900000}
+      RATE_LIMIT_MAX_REQUESTS: ${RATE_LIMIT_MAX_REQUESTS:-100}
+      AUTH_RATE_LIMIT_MAX_ATTEMPTS: ${AUTH_RATE_LIMIT_MAX_ATTEMPTS:-10}
+      INITIAL_OWNER_EMAIL: ${INITIAL_OWNER_EMAIL:-owner@example-roofing.com}
+      INITIAL_OWNER_PASSWORD: ${INITIAL_OWNER_PASSWORD}
+      INITIAL_OWNER_FULL_NAME: ${INITIAL_OWNER_FULL_NAME:-Business Owner}
+      COMPANY_NAME: ${COMPANY_NAME:-Apex Roofing Solutions}
+      COMPANY_PHONE: ${COMPANY_PHONE:-(555) 123-4567}
+      COMPANY_EMERGENCY_PHONE: ${COMPANY_EMERGENCY_PHONE:-(555) 999-HELP}
+      COMPANY_DISPATCH_EMAIL: ${COMPANY_DISPATCH_EMAIL:-${INITIAL_OWNER_EMAIL:-owner@example-roofing.com}}
+      COMPANY_ADDRESS: ${COMPANY_ADDRESS:-100 Commercial Pkwy, Suite 200, Metro Area}
+      COMPANY_LICENSE: ${COMPANY_LICENSE:-ROOF-LIC-10928}
+      COMPANY_SERVICE_AREAS: ${COMPANY_SERVICE_AREAS:-Metro Area, North County, South County, East Suburbs, West Suburbs}
+      N8N_INTERNAL_URL: http://n8n:5678
+      N8N_LEAD_WEBHOOK_PATH: /webhook/roofing-lead-created
+      N8N_WEBHOOK_SECRET: ${N8N_WEBHOOK_SECRET}
+    depends_on:
+      db:
+        condition: service_healthy
+      n8n:
+        condition: service_started
+    networks:
+      - frontend_net
+      - backend_net
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:5000/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+  # ============================================================================
+  # 4. Persistent PostgreSQL 16 Database
+  # ============================================================================
+  db:
+    image: postgres:16-alpine
+    container_name: ${COMPOSE_PROJECT_NAME:-roofing}-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-roofing_leads}
+      POSTGRES_USER: ${POSTGRES_USER:-roofing_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - backend_net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  # ============================================================================
+  # 5. n8n Automation Engine (Private Internal & Host-Local Editor)
+  # ============================================================================
+  n8n:
+    image: docker.n8n.io/n8nio/n8n:latest
+    container_name: ${COMPOSE_PROJECT_NAME:-roofing}-n8n
+    restart: unless-stopped
+    ports:
+      # Bound strictly to 127.0.0.1 on the host for secure SSH tunneling only
+      - "127.0.0.1:${N8N_HOST_PORT:-5678}:5678"
+    environment:
+      N8N_PORT: 5678
+      N8N_PROTOCOL: http
+      GENERIC_TIMEZONE: UTC
+      TZ: UTC
+      N8N_METRICS: "false"
+      N8N_DIAGNOSTICS_ENABLED: "false"
+      N8N_WEBHOOK_SECRET: ${N8N_WEBHOOK_SECRET}
+      N8N_BASIC_AUTH_ACTIVE: "true"
+      N8N_BASIC_AUTH_USER: ${N8N_BASIC_AUTH_USER:-n8n_admin}
+      N8N_BASIC_AUTH_PASSWORD: ${N8N_BASIC_AUTH_PASSWORD}
+      N8N_ENCRYPTION_KEY: ${N8N_ENCRYPTION_KEY}
+      N8N_BLOCK_ENV_ACCESS_IN_NODE: "true"
+      WEBHOOK_URL: http://n8n:5678/
+      N8N_WEBHOOK_URL: http://n8n:5678/
+      STAFF_NOTIFICATION_EMAIL: ${STAFF_NOTIFICATION_EMAIL:-${INITIAL_OWNER_EMAIL:-owner@example-roofing.com}}
+      SMTP_DISPATCH_FROM: ${SMTP_DISPATCH_FROM:-${COMPANY_EMAIL:-contact@apexroofingexample.com}}
+      COMPANY_NAME: ${COMPANY_NAME:-Apex Roofing Solutions}
+    volumes:
+      - n8n_data:/home/node/.n8n
+    networks:
+      - backend_net
+
+# ==============================================================================
+# Persistent Named Volumes (Isolated per COMPOSE_PROJECT_NAME)
+# ==============================================================================
+volumes:
+  postgres_data:
+    name: ${COMPOSE_PROJECT_NAME:-roofing}_postgres_data
+  n8n_data:
+    name: ${COMPOSE_PROJECT_NAME:-roofing}_n8n_data
+  caddy_data:
+    name: ${COMPOSE_PROJECT_NAME:-roofing}_caddy_data
+  caddy_config:
+    name: ${COMPOSE_PROJECT_NAME:-roofing}_caddy_config
+
+# ==============================================================================
+# Isolated Bridge Networks (Isolated per COMPOSE_PROJECT_NAME)
+# ==============================================================================
+networks:
+  frontend_net:
+    name: ${COMPOSE_PROJECT_NAME:-roofing}_frontend_net
+    driver: bridge
+  backend_net:
+    name: ${COMPOSE_PROJECT_NAME:-roofing}_backend_net
+    driver: bridge
