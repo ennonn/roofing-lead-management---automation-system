@@ -85,13 +85,15 @@ This document formalizes the functional and non-functional requirements for the 
 
 ### 3.4. Business Settings Management
 
-- **FR-SET-01: Operational Configuration**:
-  - Owner/Admin users can update business operational details via the dashboard:
-    - Company legal name and DBA.
-    - Primary dispatch email (destination for new lead alerts).
-    - Primary office phone and emergency storm contact numbers.
-    - Operating hours and weekend emergency policy.
-    - Active service counties/cities/zip codes.
+- **FR-SET-01: Operational Configuration (Deployment & Database Seeded)**:
+  - Business operational parameters are configured at deployment time via environment variables (`COMPANY_*`, `VITE_*`) and seeded into the PostgreSQL `business_settings` table during `npm run db:seed`:
+    - Company legal name and DBA (`COMPANY_NAME`).
+    - Primary dispatch email for notifications (`STAFF_NOTIFICATION_EMAIL` / `COMPANY_DISPATCH_EMAIL`).
+    - Primary office phone (`COMPANY_PHONE`) and emergency storm contact (`COMPANY_EMERGENCY_PHONE`).
+    - Operating hours (`VITE_HOURS_WEEKDAYS`, `VITE_HOURS_SATURDAY`, `VITE_HOURS_SUNDAY`).
+    - Active service regions (`COMPANY_SERVICE_AREAS`).
+  - Public business information is queryable via the public endpoint `GET /api/v1/business/public-info`.
+  - *In-app GUI modification of business settings from within the private dashboard is deferred to a future milestone; settings are modified at deployment/environment time.*
 
 ### 3.5. n8n Automation Workflows
 

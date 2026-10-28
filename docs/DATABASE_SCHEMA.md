@@ -19,6 +19,7 @@ erDiagram
     users ||--o{ lead_notes : "writes"
     leads ||--o{ lead_notes : "contains"
     leads ||--o{ outbox_events : "generates"
+    leads ||--o{ n8n_processed_events : "tracks"
     users ||--o{ sessions : "establishes"
 
     users {
@@ -91,6 +92,21 @@ erDiagram
         timestamptz delivered_at
         text last_error
         timestamptz created_at
+    }
+
+    n8n_processed_events {
+        uuid idempotency_key PK
+        uuid lead_id FK
+        varchar event_type "lead.created"
+        varchar status "processing | completed | failed"
+        boolean customer_notified
+        boolean staff_notified
+        integer claim_version
+        timestamptz lease_expires_at
+        timestamptz processed_at
+        text last_error
+        timestamptz created_at
+        timestamptz updated_at
     }
 ```
 
@@ -227,6 +243,53 @@ Durable queue for asynchronous webhook dispatch to n8n. Records are inserted in 
 
 ---
 
+### 3.7. `n8n_processed_events` Table (Workflow Idempotency, Concurrency Locking & Fencing)
+Durable state store accessed by n8n to ensure atomic claiming, concurrent lock rejection (409), lease expiration crash recovery, and partial-failure recovery.
+
+| Column | Data Type | Nullable | Default | Description |
+| :--- | :--- | :--- | :--- | :--- |
+| `idempotency_key` | `UUID` | No | - | Primary Key (matches outbox idempotency key) |
+| `lead_id` | `UUID` | No | - | Foreign Key -> `leads(id)` ON DELETE CASCADE |
+| `event_type` | `VARCHAR(50)` | No | `'lead.created'` | Event type |
+| `status` | `VARCHAR(20)` | No | `'processing'` | `'processing'`, `'completed'`, or `'failed'` |
+| `customer_notified` | `BOOLEAN` | No | `false` | True after customer acknowledgement succeeds |
+| `staff_notified` | `BOOLEAN` | No | `false` | True after staff dispatch alert succeeds |
+| `claim_version` | `INTEGER` | No | `1` | Monotonically increasing fencing counter |
+| `lease_expires_at` | `TIMESTAMPTZ` | No | `now()` | In-flight lease expiration timestamp |
+| `processed_at` | `TIMESTAMPTZ` | Yes | `NULL` | Timestamp when workflow marked completed |
+| `last_error` | `TEXT` | Yes | `NULL` | Diagnostic error message |
+| `created_at` | `TIMESTAMPTZ` | No | `now()` | Record creation timestamp |
+| `updated_at` | `TIMESTAMPTZ` | No | `now()` | Record last update timestamp |
+
+**Indexes & Constraints**:
+- `n8n_processed_events_pkey`: `PRIMARY KEY (idempotency_key)`
+- `idx_n8n_processed_events_lead`: `INDEX (lead_id)`
+- `idx_n8n_processed_events_status`: `INDEX (status)`
+- `idx_n8n_processed_events_lease`: `INDEX (status, lease_expires_at)` (optimized for lease recovery)
+
+---
+
+### 3.8. Stored Functions for Concurrency & Lease Fencing
+
+Applied via migration `0003_n8n_claim_functions.sql`:
+
+1. **`acquire_n8n_lead_claim(p_idempotency_key uuid, p_lead_id uuid, p_lease_interval interval)`**:
+   - Executes atomic insert with `ON CONFLICT (idempotency_key) DO NOTHING`.
+   - Uses `#variable_conflict use_column` to prevent column/variable ambiguity.
+   - Falls back to `SELECT ... FOR UPDATE` under `READ COMMITTED` to re-evaluate latest row state.
+   - Returns deterministic statuses:
+     - `CLAIM_ACQUIRED`: First caller receives lease, or expired lease reclaimed with incremented `claim_version`.
+     - `ALREADY_COMPLETED`: Workflow already delivered notifications; prevents redundant duplicate dispatches.
+     - `CONCURRENT_LOCKED`: Concurrent request holds active lease; workflow responds with HTTP 409 to back off.
+     - `AMBIGUOUS_RETRY`: Concurrent transaction rolled back.
+
+2. **`verify_and_renew_n8n_claim(p_idempotency_key uuid, p_claim_version integer, p_lease_interval interval)`**:
+   - Pre-flight lease renewal executed prior to email side-effects.
+   - Atomically updates `lease_expires_at` only if `claim_version` matches and status is `processing`.
+   - Returns boolean `is_valid`. If false (lease hijacked due to slow execution or crash), workflow aborts before sending notifications.
+
+---
+
 ## 4. Drizzle ORM Schema Blueprint (TypeScript)
 
 ```typescript
@@ -324,10 +387,31 @@ export const outboxEvents = pgTable("outbox_events", {
   dispatchIdx: index("idx_outbox_events_dispatch").on(table.status, table.nextRetryAt),
 }));
 
+// 7. n8n Processed Events (Workflow Idempotency, Concurrency Locking & Fencing)
+export const n8nProcessedEvents = pgTable("n8n_processed_events", {
+  idempotencyKey: uuid("idempotency_key").primaryKey(),
+  leadId: uuid("lead_id").notNull().references(() => leads.id, { onDelete: "cascade" }),
+  eventType: varchar("event_type", { length: 50 }).notNull().default("lead.created"),
+  status: varchar("status", { length: 20 }).notNull().default("processing"), // 'processing' | 'completed' | 'failed'
+  customerNotified: boolean("customer_notified").notNull().default(false),
+  staffNotified: boolean("staff_notified").notNull().default(false),
+  claimVersion: integer("claim_version").notNull().default(1),
+  leaseExpiresAt: timestamp("lease_expires_at", { withTimezone: true }).notNull().defaultNow(),
+  processedAt: timestamp("processed_at", { withTimezone: true }),
+  lastError: text("last_error"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => ({
+  leadIdx: index("idx_n8n_processed_events_lead").on(table.leadId),
+  statusIdx: index("idx_n8n_processed_events_status").on(table.status),
+  leaseIdx: index("idx_n8n_processed_events_lease").on(table.status, table.leaseExpiresAt),
+}));
+
 // Relationships
 export const leadsRelations = relations(leads, ({ many }) => ({
   notes: many(leadNotes),
   outboxEvents: many(outboxEvents),
+  n8nEvents: many(n8nProcessedEvents),
 }));
 
 export const leadNotesRelations = relations(leadNotes, ({ one }) => ({
@@ -338,4 +422,9 @@ export const leadNotesRelations = relations(leadNotes, ({ one }) => ({
 export const outboxEventsRelations = relations(outboxEvents, ({ one }) => ({
   lead: one(leads, { fields: [outboxEvents.aggregateId], references: [leads.id] }),
 }));
+
+export const n8nProcessedEventsRelations = relations(n8nProcessedEvents, ({ one }) => ({
+  lead: one(leads, { fields: [n8nProcessedEvents.leadId], references: [leads.id] }),
+}));
 ```
+

@@ -1,11 +1,11 @@
-# System Architecture Specification
+# System Architecture Specification — Roofing Lead Management System
 
 ## 1. Executive Summary & Purpose
 
-The **Roofing Lead Management & Automation System** is an extensible, single-tenant web application and lead-automation platform tailored for roofing contractors. Each deployment provides a distinct roofing company with:
-1. A high-converting, responsive public marketing website with an interactive decision-tree chatbot and quote submission intake.
+The **Roofing Lead Management & Automation System** is an extensible, single-tenant web application and lead-automation platform tailored specifically for roofing contractors. Each deployment provides a distinct roofing company with:
+1. A high-converting, responsive public marketing website with an interactive decision-tree chatbot and quote intake.
 2. A secure, role-based internal administrative dashboard for managing leads, recording follow-up interactions, and reviewing real-time conversion metrics.
-3. An asynchronous automation pipeline powered by self-hosted n8n to deliver instant notifications and scheduled customer follow-ups.
+3. An asynchronous automation pipeline powered by self-hosted n8n to deliver instant staff dispatch notifications and customer acknowledgements.
 
 Each roofing business client operates on a **dedicated, isolated deployment** (isolated PostgreSQL database, backend instance, frontend static bundle, and n8n engine) deployed on a VPS via Docker Compose.
 
@@ -14,23 +14,22 @@ Each roofing business client operates on a **dedicated, isolated deployment** (i
 ## 2. Documentation Authority & Organization
 
 > [!IMPORTANT]
-> **Project Brief Authority**: [Overview.md](file:///Users/aljonfernando/Documents/roofing-lead-management-&-automation-system/Overview.md) located at the workspace root is the **single authoritative source of business requirements** for this project. 
+> **Project Brief Authority**: [`Overview.md`](file:///Users/aljonfernando/Documents/roofing-lead-management-&-automation-system/Overview.md) located at the workspace root is the **single authoritative source of business requirements** for this project. 
 >
-> To avoid document drift or conflicting specifications, we recommend **keeping `Overview.md` at the repository root** as the primary project brief and linking to it directly from this documentation suite. A duplicate `docs/PROJECT_OVERVIEW.md` must not be created.
-
-Related technical specifications in this suite:
-- [REQUIREMENTS.md](file:///Users/aljonfernando/Documents/roofing-lead-management-&-automation-system/docs/REQUIREMENTS.md): Functional and non-functional requirements.
-- [DATABASE_SCHEMA.md](file:///Users/aljonfernando/Documents/roofing-lead-management-&-automation-system/docs/DATABASE_SCHEMA.md): PostgreSQL entities, migrations, and Drizzle models.
-- [API_SPECIFICATION.md](file:///Users/aljonfernando/Documents/roofing-lead-management-&-automation-system/docs/API_SPECIFICATION.md): REST endpoints, schemas, and webhook contracts.
-- [SECURITY.md](file:///Users/aljonfernando/Documents/roofing-lead-management-&-automation-system/docs/SECURITY.md): Threat modeling, session auth, rate limiting, and RBAC.
-- [DEPLOYMENT.md](file:///Users/aljonfernando/Documents/roofing-lead-management-&-automation-system/docs/DEPLOYMENT.md): Containerization, n8n licensing, networking, and backup protocols.
-- [IMPLEMENTATION_PLAN.md](file:///Users/aljonfernando/Documents/roofing-lead-management-&-automation-system/docs/IMPLEMENTATION_PLAN.md): Staged delivery milestones.
+> Related technical specifications in this documentation suite:
+> - [`docs/PAGE_AND_SCREEN_REFERENCE.md`](file:///Users/aljonfernando/Documents/roofing-lead-management-&-automation-system/docs/PAGE_AND_SCREEN_REFERENCE.md): Screen-by-screen inventory of all public pages, dashboard views, actions, and states.
+> - [`docs/CONFIGURATION_REFERENCE.md`](file:///Users/aljonfernando/Documents/roofing-lead-management-&-automation-system/docs/CONFIGURATION_REFERENCE.md): Complete reference of all environment variables, build arguments, and runtime flags.
+> - [`docs/API_SPECIFICATION.md`](file:///Users/aljonfernando/Documents/roofing-lead-management-&-automation-system/docs/API_SPECIFICATION.md): REST endpoints, schemas, error codes, and webhook contracts.
+> - [`docs/DATABASE_SCHEMA.md`](file:///Users/aljonfernando/Documents/roofing-lead-management-&-automation-system/docs/DATABASE_SCHEMA.md): PostgreSQL entities, migrations 0000–0003, and Drizzle models.
+> - [`docs/SECURITY.md`](file:///Users/aljonfernando/Documents/roofing-lead-management-&-automation-system/docs/SECURITY.md): Threat modeling, session auth, rate limiting, and n8n boundary enforcement.
+> - [`docs/DEPLOYMENT.md`](file:///Users/aljonfernando/Documents/roofing-lead-management-&-automation-system/docs/DEPLOYMENT.md): Containerization, headless credential provisioning, networking, and backup protocols.
+> - [`docs/REQUIREMENTS.md`](file:///Users/aljonfernando/Documents/roofing-lead-management-&-automation-system/docs/REQUIREMENTS.md): Functional and non-functional requirements.
 
 ---
 
-## 3. High-Level System Architecture
+## 3. High-Level System Architecture & Container Topology
 
-The application adopts a **4-tier service architecture** designed for clean separation of concerns, high resilience, and zero client data bleeding.
+The deployment architecture is organized into **5 containerized services** connected across two isolated Docker bridge networks:
 
 ```mermaid
 flowchart TD
@@ -39,140 +38,268 @@ flowchart TD
         Staff["Business Owner / Staff"]
     end
 
-    subgraph Edge Layer ["Reverse Proxy (Caddy / Nginx)"]
-        Proxy["TLS Termination & Reverse Proxy (:80 / :443)"]
+    subgraph Edge Layer ["Reverse Proxy (caddy:2-alpine)"]
+        Proxy["Caddy Edge Proxy\nPorts: 80, 443\nAuto-TLS / Security Headers"]
     end
 
-    subgraph Client Deployment Stack ["Single-Tenant Docker Compose Stack"]
-        subgraph Web Tier
-            Frontend["Vite + React Static App (Public Site + Dashboard)"]
-        end
-
-        subgraph Application Tier
-            Backend["Express + TypeScript REST API (:5000)"]
-            ZodVal["Zod Schema Validation & Sanitization"]
-            AuthMod["Session Auth Middleware (connect-pg-simple)"]
-            LeadsMod["Lead Management & Stats Engine"]
-            WebhookClient["Resilient n8n Webhook Client"]
-        end
-
-        subgraph Data Tier
-            Postgres[("PostgreSQL 16 Database\n(Leads, Sessions, Users, Settings)")]
-        end
-
-        subgraph Automation Tier ["Internal Network Only"]
-            N8N["Self-Hosted n8n Engine (:5678)"]
-            EmailSMTP["SMTP / Email Provider (SendGrid / Postmark)"]
-        end
+    subgraph Internal Network: frontend_net
+        Frontend["Frontend SPA (nginx:alpine)\nClient-Branded React 18 Bundle"]
     end
 
-    Visitor -->|HTTPS / GET pages, POST quote| Proxy
-    Staff -->|HTTPS / Dashboard Login & Lead Mgt| Proxy
+    subgraph Internal Network: backend_net
+        Backend["Backend REST API (Node.js 22 Alpine)\nExpress + Drizzle ORM + Outbox Worker\nPort: 5000 (Internal only)"]
+        DB[("PostgreSQL 16 Database\nVolume: ${COMPOSE_PROJECT_NAME}_postgres_data\nPort: 5432 (Internal only)")]
+        N8N["n8n Automation Engine\nBound: 127.0.0.1:5678 (Loopback only)\nN8N_BLOCK_ENV_ACCESS_IN_NODE: true"]
+    end
 
-    Proxy -->|Static Web Traffic| Frontend
-    Proxy -->|/api/* Requests| Backend
+    subgraph External Services
+        SMTP["Client SMTP Provider\n(SendGrid / Postmark / SES / Mailpit)"]
+    end
 
-    Backend --> ZodVal
-    Backend --> AuthMod
-    Backend --> LeadsMod
-    Backend --> WebhookClient
+    Visitor -->|HTTPS :80/:443| Proxy
+    Staff -->|HTTPS :80/:443| Proxy
 
-    AuthMod <-->|Session Store| Postgres
-    LeadsMod <-->|Persistent CRUD| Postgres
+    Proxy -->|Static traffic: /*| Frontend
+    Proxy -->|API traffic: /api/*| Backend
 
-    WebhookClient -.->|Internal POST with X-Webhook-Secret| N8N
-    N8N -->|Customer Acknowledgement & Owner Alerts| EmailSMTP
+    Backend <-->|Drizzle ORM Queries| DB
+    Backend -->|Authenticated Webhook + X-Webhook-Secret| N8N
+    N8N <-->|Atomic Claims & Lease Renewals| DB
+    N8N -->|Email Notification Dispatch| SMTP
 ```
 
----
+### 3.1. Container Services Breakdown
 
-## 4. Key Architectural Principles & Component Boundaries
+| Service Name | Image / Dockerfile | Purpose | Network | Published Ports | Volume Mounts |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| `proxy` | `caddy:2-alpine` | Edge reverse proxy, TLS termination, HTTP->HTTPS redirect, security headers. | `frontend_net` | `80:80`, `443:443` | `caddy_data`, `caddy_config`, `./caddy/Caddyfile:ro` |
+| `frontend` | `frontend/Dockerfile` | Static SPA web server (Nginx Alpine) serving compiled React 18 / Vite bundle. | `frontend_net` | None (Internal) | None |
+| `backend` | `backend/Dockerfile` | Express REST API and background transactional outbox delivery worker. | `frontend_net`, `backend_net` | None (Internal) | None |
+| `db` | `postgres:16-alpine` | Relational database storing leads, sessions, outbox events, and n8n claim records. | `backend_net` | None (Internal) | `${COMPOSE_PROJECT_NAME}_postgres_data` |
+| `n8n` | `n8nio/n8n:latest` | Workflow automation engine executing notification delivery and concurrency fencing. | `backend_net` | `127.0.0.1:${N8N_HOST_PORT:-5678}:5678` | `${COMPOSE_PROJECT_NAME}_n8n_data` |
 
-### 4.1. Single-Tenant Data Isolation
-- To guarantee strict privacy and eliminate multi-tenant leak vectors, **every roofing client receives a separate VPS deployment or isolated container stack**.
-- Client customer records, follow-up notes, and business configuration never share database schemas or tables with other companies.
-
-### 4.2. Database as Primary Source of Truth
-- The PostgreSQL database is the sole authoritative store. External tools like Google Sheets or CRM systems are optional downstream consumers, never system-of-record dependencies.
-- **Fail-Safe Lead Ingestion**: When a public quote is submitted, the backend validates and commits the lead record to PostgreSQL *before* attempting to trigger any automation. 
-- If n8n or an external email delivery service is offline or errors, the lead is safely recorded with an `automation_status = 'pending'` or `'failed'` flag for subsequent retry. Under no circumstances does an automation failure drop or discard customer data.
-
-### 4.3. Hybrid Business Configuration
-To balance fast white-label customization with runtime operational control, configuration follows a two-tier hybrid model:
-1. **Static Branding Layer (Build/Env Time)**: Logo assets, default theme color palette, typography tokens, and default legal terms live in frontend static configuration (`src/config/branding.ts`).
-2. **Operational Settings Layer (Database Stored)**: Company phone number, notification dispatch email, operational business hours, active service zip codes, and chatbot prompt decisions are stored in the PostgreSQL `business_settings` table and editable in the private dashboard by authorized Owner/Admin users.
-
-### 4.4. Separation of Public Website and Authenticated Dashboard
-- **Public Surface**: Static roofing marketing pages (Home, Services, About, Service Areas, Contact/Quote, Privacy) and decision-tree chatbot. These invoke only public, rate-limited intake endpoints.
-- **Private Surface**: Dashboard pages (Login, Overview Stats, Leads List, Lead Details, Business Settings). Enforced at the network and server level by Express session authentication cookies (`HttpOnly`, `SameSite=Lax`, `Secure`). Client-side route hiding is treated purely as a UI convenience; all API endpoints enforce server-side session checks.
+### 3.2. Network Boundaries & Port Isolation
+1. **Edge Isolation (`frontend_net`)**: The Caddy proxy routes external requests to either the static Nginx frontend (`/*`) or the backend Express API (`/api/*`). Neither the database nor the n8n container is connected to `frontend_net`.
+2. **Data Tier Isolation (`backend_net`)**: The PostgreSQL database (port `5432`) is **completely unmapped** to the host machine. Only the backend API and the n8n container can communicate with the database over the private bridge network.
+3. **n8n Host Binding**: Port `5678` is bound **strictly to `127.0.0.1`** (loopback interface). Caddy does not route public traffic to n8n. Webhook calls are dispatched internally over `backend_net` from the backend API. Administrative access requires an SSH encrypted tunnel to the VPS host.
 
 ---
 
-## 5. Automation Architecture (Transactional Outbox Pattern)
+## 4. End-to-End Request Flows & Subsystems
 
-To ensure **guaranteed lead preservation**, **zero data loss**, and **reliable at-least-once delivery**, the integration between the Express backend and n8n adopts the **Transactional Outbox Pattern**:
+### 4.1. Browser to Frontend to Backend Request Flow
+
+1. **Static SPA Delivery**: The browser issues a `GET /` request. Caddy proxies to the Nginx frontend container, which delivers the cached React SPA bundle (`index.html`, CSS, and JS chunks).
+2. **Client-Side Routing**: React Router manages client-side navigation (`/services`, `/about`, `/service-areas`, `/contact`, `/login`, `/dashboard`). No server round-trip is required for navigation.
+3. **API Proxying**: Client API calls target `/api/v1/*`. Caddy strips edge TLS and forwards the requests directly to the Node.js Express backend on port `5000`.
+4. **CORS & Origin Verification**: Express verifies `Origin` headers against `CLIENT_ORIGIN` and enforces helmet security headers (CSP, HSTS, X-Content-Type-Options, X-Frame-Options: DENY).
+
+---
+
+### 4.2. Quote Intake & Transactional Outbox Flow
+
+The system implements the **Transactional Outbox Pattern** to ensure zero data loss during network disruptions or automation failures:
 
 ```mermaid
 sequenceDiagram
     autonumber
-    actor Customer as Homeowner / Visitor
-    participant React as React Frontend
-    participant API as Express API
-    participant DB as PostgreSQL
-    participant Worker as Outbox Worker (Backend)
-    participant N8N as n8n Community Engine
-    actor Owner as Roofing Owner / Staff
+    actor Homeowner as Homeowner / Visitor
+    participant Browser as React SPA (QuoteForm)
+    participant API as Express API (/api/v1/leads)
+    participant DB as PostgreSQL Database
+    participant Worker as Background Outbox Worker
+    participant N8N as n8n Automation Engine
+    participant SMTP as Client SMTP Provider
 
-    Customer->>React: Submits Text-Only Quote Form
-    React->>API: POST /api/v1/leads (with payload)
-    API->>API: Zod validation & honeypot check
+    Homeowner->>Browser: Fills quote form and clicks "Request Free Estimate"
+    Browser->>Browser: Client-side validation & honeypot (_hp) check
+    Browser->>API: POST /api/v1/leads (CreateLeadDto JSON)
+    API->>API: Rate limiter check (5 per 10m) & Zod server-side validation
 
     rect rgb(240, 248, 255)
-        Note over API,DB: ACID Transaction (Same DB Commit)
-        API->>DB: INSERT into leads (status: 'new', automation_status: 'pending')
-        API->>DB: INSERT into outbox_events (aggregate_id: lead.id, event: 'lead.created', idempotency_key: UUID, status: 'pending')
-        DB-->>API: Transaction Committed Successfully
+        Note over API,DB: Single ACID Database Transaction
+        API->>DB: INSERT INTO leads (status='new', automation_status='pending')
+        API->>DB: INSERT INTO outbox_events (aggregate_id=lead.id, payload=eventPayload, idempotency_key=UUID, status='pending')
+        DB-->>API: Transaction Committed (Lead ID generated)
     end
 
-    API-->>React: 201 Created { leadId, message: "Quote received" }
-    React-->>Customer: Displays Instant Confirmation Screen
+    API-->>Browser: HTTP 201 Created { success: true, data: { leadId, referenceId } }
+    Browser-->>Homeowner: Displays confirmation panel with turnaround estimate
 
     rect rgb(255, 250, 240)
-        Note over Worker,N8N: Asynchronous Outbox Delivery Worker
-        Worker->>DB: SELECT pending events FOR UPDATE SKIP LOCKED
-        Worker->>N8N: POST /webhook/roofing-lead-created<br/>Header: X-Webhook-Secret: [SECRET]<br/>Header: X-Idempotency-Key: [UUID]<br/>Body: { leadId, customer, service, location }
-        alt n8n Confirmed Success (HTTP 200 OK)
-            N8N->>Owner: Dispatches Email Notification
-            N8N-->>Worker: 200 OK { status: "received", confirmed: true }
-            Worker->>DB: UPDATE outbox_events SET status = 'delivered', delivered_at = now()
-            Worker->>DB: UPDATE leads SET automation_status = 'delivered'
-        else n8n Failure / Network Timeout
-            Worker->>DB: UPDATE outbox_events SET status = 'pending', retry_count = retry_count + 1, next_retry_at = now() + backoff, last_error = error
-            Note over Worker,DB: Lead remains safe. Worker retries using exponential backoff (max 5 retries). Never marked 'delivered' prematurely.
+        Note over Worker,N8N: Asynchronous Outbox Delivery Loop (Every 5s)
+        Worker->>DB: SELECT outbox_events FOR UPDATE SKIP LOCKED WHERE status IN ('pending', 'processing') AND next_retry_at <= now()
+        Worker->>DB: UPDATE outbox_events SET status='processing', next_retry_at=now() + 5m
+        Worker->>N8N: POST /webhook/roofing-lead-created<br/>Headers: X-Webhook-Secret, X-Idempotency-Key<br/>Body: eventPayload (JSON)
+
+        alt Secret Missing or Incorrect
+            N8N-->>Worker: HTTP 403 Forbidden (Halted at boundary; 0 executions)
+            Worker->>DB: Marks retry with exponential backoff
+        else Valid Authentication & Idempotency Key
+            N8N->>DB: SELECT * FROM acquire_n8n_lead_claim(idempotencyKey, leadId)
+            alt Already Completed
+                DB-->>N8N: claim_status = 'ALREADY_COMPLETED'
+                N8N-->>Worker: HTTP 200 OK (already_processed; 0 emails sent)
+            else Concurrent Lease Active
+                DB-->>N8N: claim_status = 'CONCURRENT_LOCKED'
+                N8N-->>Worker: HTTP 409 Conflict (Worker backs off and retries)
+            else Claim Acquired
+                DB-->>N8N: claim_status = 'CLAIM_ACQUIRED', claim_version = N
+                N8N->>SMTP: Dispatch staff notification email
+                N8N->>DB: UPDATE n8n_processed_events SET staff_notified=true
+                opt Customer email provided
+                    N8N->>SMTP: Dispatch customer acknowledgement email
+                    N8N->>DB: UPDATE n8n_processed_events SET customer_notified=true
+                end
+                N8N->>DB: UPDATE n8n_processed_events SET status='completed', processed_at=now()
+                N8N-->>Worker: HTTP 200 OK { success: true, status: 'received', confirmed: true }
+                Worker->>DB: UPDATE outbox_events SET status='delivered', delivered_at=now()
+                Worker->>DB: UPDATE leads SET automation_status='delivered'
+            end
         end
     end
 ```
 
-### 5.1. Delivery Guarantees & Duplicate Prevention
-1. **Single ACID Transaction**: The lead record and outbox record commit together. If the database crashes, neither exists. If the database succeeds, the lead is safely stored and queued for delivery.
-2. **Delivery Confirmation**: The system **never claims automation is delivered** until n8n returns an explicit HTTP 200 OK with confirmed status.
-3. **Idempotency**: Every outbox event carries an immutable `idempotency_key` (UUID v4) sent via the `X-Idempotency-Key` header. If network timeouts cause a retry, n8n uses this key to deduplicate executions, preventing duplicate customer or staff emails.
-4. **Concurrency Safety**: The worker processes events using `SELECT ... FOR UPDATE SKIP LOCKED`, preventing multiple worker ticks or processes from duplicating in-flight requests.
-5. **Exponential Backoff**: Failed delivery attempts retry with exponential backoff (`30s`, `1m`, `2m`, `5m`, `15m`). If `retry_count >= max_retries`, the event transitions to `'failed'` and triggers a high-priority system alert in the dashboard.
+---
 
-### 5.2. n8n Deployment & Security Isolation
-- The n8n Webhook node listens only on the internal Docker network or behind an authenticated internal proxy route.
-- The n8n web editor UI is **never exposed directly to the public internet**. Access for workflow adjustments is restricted to `127.0.0.1` via SSH tunneling or basic-auth protected internal endpoints.
+### 4.3. Concurrency Fencing, Leases & Database Claims
+
+1. **The PostgreSQL Snapshot Race Problem**: Under PostgreSQL's default `READ COMMITTED` transaction isolation, concurrent multi-clause CTE queries (`try_insert` + `fallback_read`) suffer from snapshot invisibility. If transaction $T_1$ commits between the insert and read of transaction $T_2$, $T_2$ cannot see $T_1$'s committed row, potentially causing duplicate notification dispatches.
+2. **Resolution via Stored Function (`acquire_n8n_lead_claim`)**: Defined in migration [`0003_n8n_claim_functions.sql`](file:///Users/aljonfernando/Documents/roofing-lead-management-&-automation-system/backend/drizzle/0003_n8n_claim_functions.sql):
+   - Tries `INSERT INTO n8n_processed_events ... ON CONFLICT (idempotency_key) DO NOTHING`.
+   - If row exists, locks it explicitly using `SELECT ... FOR UPDATE`. Under `READ COMMITTED`, `FOR UPDATE` re-evaluates the latest committed version of the row, eliminating the snapshot race.
+   - If `status == 'completed'`, returns `claim_status = 'ALREADY_COMPLETED'`.
+   - If `lease_expires_at <= now()`, atomically reclaims the lease, increments `claim_version`, extends the lease by 5 minutes, and returns `claim_status = 'CLAIM_ACQUIRED'`.
+   - If lease is active (`lease_expires_at > now()`), returns `claim_status = 'CONCURRENT_LOCKED'` (mapped to HTTP 409 in n8n).
+3. **Pre-Flight Lease Verification (`verify_and_renew_n8n_claim`)**:
+   - Before executing external SMTP network calls, n8n verifies that its `claim_version` is still valid and has not been reclaimed by another worker due to a slow execution.
+   - If the lease expired or the fencing token changed, n8n immediately aborts without dispatching duplicate emails.
+4. **Partial-Failure Recovery**:
+   - `staff_notified` and `customer_notified` booleans are tracked independently in `n8n_processed_events`.
+   - If staff dispatch succeeds but customer dispatch fails, the next retry skips the staff alert and attempts only the customer acknowledgement.
 
 ---
 
-## 6. Scope Clarifications & Resolved Architectural Decisions
+### 4.4. n8n Security Boundaries & Credential Isolation
 
-### 6.1. Resolved MVP Scope Decisions
-1. **Notification Channels**: **Email notifications only** in the MVP for both staff alerts and customer acknowledgements. SMS notifications (e.g., Twilio) are deferred to post-MVP.
-2. **Quote Form Intake**: **Text-only quote requests** in the MVP. Photo/file attachments are deferred to avoid early multi-part storage and S3 configuration overhead.
-3. **Multi-Tenant Model**: Strictly **single-tenant per deployment**. Each roofing company receives a dedicated Docker Compose stack and isolated PostgreSQL database.
-4. **Backend Stack**: Express with TypeScript, Zod validation, and Drizzle ORM.
-5. **Session Management**: PostgreSQL-backed sessions (`connect-pg-simple`) with `HttpOnly`, `SameSite=Lax`, and `Secure` cookies.
-6. **Authentication**: Closed registration. Owner/Admin and Staff roles seeded or managed by admins.
+1. **Native Header Auth at Webhook Boundary**:
+   - The Webhook node enforces authentication using built-in `headerAuth` referencing credential `HEADER_AUTH_CREDENTIAL_ID` ("Roofing Webhook Auth").
+   - Incoming requests must supply `X-Webhook-Secret` matching `N8N_WEBHOOK_SECRET`.
+   - **Zero Downstream Execution**: Unauthorized requests return `HTTP 403 Forbidden` and record **zero** execution entities in n8n's SQLite database, ensuring no Code nodes, database queries, or subflows run.
+   - **Upstream Header Artifact**: The `WWW-Authenticate: Basic realm="Webhook"` header observed on 403 errors is hardcoded in upstream n8n's `Webhook.node.js:228` for all authorization errors, even under Header Auth. Runtime evaluation is strictly `headerAuth`.
+2. **Restricted Node Sandbox**:
+   - `N8N_BLOCK_ENV_ACCESS_IN_NODE: "true"` is actively enforced in `docker-compose.yml`.
+   - Workflow Code nodes are blocked from reading container environment variables, safeguarding `N8N_ENCRYPTION_KEY`, basic auth passwords, and internal container secrets.
+   - Workflow Code nodes contain **zero `$env` references**.
+3. **Server-Controlled Notification Metadata**:
+   - `companyName`, `dispatchEmail`, and `staffNotificationEmail` are injected into the outbox event payload by the backend API from validated server environment variables.
+   - Anonymous quote submitters cannot override or spoof recipient notification email addresses.
 
+---
+
+### 4.5. Authentication, Sessions & CSRF Protection
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Owner as Business Owner
+    participant Browser as React SPA (/login)
+    participant API as Express API (/api/v1/auth)
+    participant DB as PostgreSQL (sessions, users)
+
+    Owner->>Browser: Enters email and password
+    Browser->>API: POST /api/v1/auth/login { email, password }
+    API->>API: Rate limiter (10 attempts / 15m) & verifyCsrf
+    API->>DB: SELECT * FROM users WHERE email = $1 AND is_active = true
+    API->>API: bcrypt.compare(password, passwordHash)
+    
+    alt Invalid Credentials
+        API-->>Browser: HTTP 401 Unauthorized { code: 'INVALID_CREDENTIALS' }
+    else Valid Credentials
+        API->>DB: INSERT INTO sessions (sid, sess, expire)
+        API-->>Browser: HTTP 200 OK + Set-Cookie: roofing_sid (HttpOnly, Secure, SameSite=Lax)
+        Note over Browser: AuthContext updates state and redirects to /dashboard
+    end
+
+    opt Dashboard Data Fetching
+        Browser->>API: GET /api/v1/dashboard/stats (Cookie: roofing_sid)
+        API->>DB: SELECT sess FROM sessions WHERE sid = $1 AND expire > now()
+        API->>DB: Computes live metrics from leads table
+        API-->>Browser: HTTP 200 OK { totalLeads, newLeads, conversionRate, ... }
+    end
+
+    opt State-Changing Action (Status Update / Note)
+        Browser->>API: PATCH /api/v1/leads/:id/status (Cookie + X-CSRF-Token)
+        API->>API: verifyCsrf: validates X-CSRF-Token and Origin matching
+        API->>DB: UPDATE leads SET status = $1, last_status_update = now()
+        API-->>Browser: HTTP 200 OK { success: true, lead: updatedLead }
+    end
+```
+
+1. **Server-Managed Sessions**: Authenticated sessions are stored in the PostgreSQL `sessions` table using `connect-pg-simple`. Session cookies (`roofing_sid`) are `HttpOnly`, `SameSite=Lax`, and `Secure` (enforced in production).
+2. **CSRF Mitigation**: State-changing endpoints (`POST`, `PATCH`, `PUT`, `DELETE`) pass through `verifyCsrf` middleware, which validates session-bound tokens (`X-CSRF-Token`) and strictly matches request `Origin` headers against `CLIENT_ORIGIN`.
+3. **Role-Based Access Control**:
+   - Dashboard endpoints require valid session (`requireAuth`).
+   - Lead management, notes, status changes, and dashboard statistics require `requireRole(["owner", "admin"])`.
+   - Public quote submission (`POST /api/v1/leads`) and public business info (`GET /api/v1/business/public-info`) require no authentication.
+
+---
+
+### 4.6. Chatbot Decision-Tree Subsystem
+
+The public chatbot is an **interactive client-side decision tree**, not an artificial intelligence / LLM agent:
+
+```mermaid
+graph TD
+    Root["Root: Main Menu\n(Greets user with companyName)"]
+    
+    Root --> Repair["Node: repair\nLeak tracing & shingle repair info"]
+    Root --> Replace["Node: replacement\nArchitectural & metal replacement info"]
+    Root --> Inspect["Node: inspection\nMulti-point diagnostic inspection info"]
+    Root --> Emergency["Node: emergency\nStorm damage & emergency leak guidance"]
+    Root --> Commercial["Node: commercial\nTPO, EPDM, and flat roof coatings"]
+    Root --> Areas["Node: service-areas\nLists configured serviceAreas"]
+    Root --> Quote["Node: quote\nDirect link to /contact Quote Form"]
+    Root --> Contact["Node: contact\nDirect telephone action + /contact link"]
+    Root --> Other["Node: other\nGeneral assistance & office dispatch"]
+
+    Emergency -.->|Click to Call| TelAction["tel: emergencyPhone (RFC 3966)"]
+    Repair -.->|Request Estimate| QuoteLink["Navigates to /contact"]
+    Replace -.->|Request Estimate| QuoteLink
+    Inspect -.->|Request Estimate| QuoteLink
+```
+
+- **Implementation**: [`src/components/chat/ChatbotWidget.tsx`](file:///Users/aljonfernando/Documents/roofing-lead-management-&-automation-system/frontend/src/components/chat/ChatbotWidget.tsx) and [`src/config/chatbotTree.ts`](file:///Users/aljonfernando/Documents/roofing-lead-management-&-automation-system/frontend/src/config/chatbotTree.ts).
+- **Zero External AI Dependencies**: Runs 100% in the client browser with zero latency, zero token costs, and zero risk of hallucinating pricing, warranty guarantees, or unverified claims.
+- **Vanity Phone Normalization**: Automatically converts keypad vanity letters (e.g. `(555) 999-HELP` -> `(555) 999-4357`) into standard dialable RFC 3966 `tel:` links.
+- **Graceful Fallbacks**: If `emergencyPhone` is unconfigured, the emergency node cleanly falls back to the primary office phone number or the `/contact` form.
+
+---
+
+## 5. Database Schema & Data Ownership
+
+PostgreSQL 16 is the **sole system of record**. All schema definitions are managed in [`backend/src/db/schema.ts`](file:///Users/aljonfernando/Documents/roofing-lead-management-&-automation-system/backend/src/db/schema.ts) with version-controlled SQL migrations:
+
+| Table Name | Migration | Primary Key | Description & Data Ownership |
+| :--- | :--- | :--- | :--- |
+| `users` | `0000` | `id` (UUID) | Authenticated user accounts (`owner`, `admin`, `staff`). Passwords hashed with bcrypt (cost factor 12). |
+| `sessions` | `0000` | `sid` (varchar) | Persistent HTTP session store managed by `connect-pg-simple`. |
+| `business_settings` | `0000` | `id` (UUID) | Client operational identity, phone numbers, license, service areas, and business hours. Populated during `db:seed`. |
+| `leads` | `0000` | `id` (UUID) | Inbound customer quote inquiries, contact data, service requests, lead status, and automation delivery status. |
+| `lead_notes` | `0000` | `id` (UUID) | User-attributed follow-up notes linked to `leads.id` with author foreign key referencing `users.id`. |
+| `outbox_events` | `0000` | `id` (UUID) | Transactional outbox queue for reliable asynchronous dispatch to n8n. |
+| `n8n_processed_events`| `0001`–`0003` | `idempotency_key` (UUID) | Workflow deduplication store, atomic row claims, 5-minute lease fencing, and notification booleans (`staff_notified`, `customer_notified`). |
+
+---
+
+## 6. Implementation Scope vs. Future Roadmap
+
+| Subsystem / Capability | Current Implemented Status | Future Roadmap / Deferred |
+| :--- | :--- | :--- |
+| **Public Website** | Fully implemented (Home, Services, About, Service Areas, Contact, Privacy). | Photo upload / roof damage image attachments. |
+| **Chatbot Widget** | Deterministic decision tree with vanity phone normalization. | LLM / conversational AI agent integration. |
+| **Lead Management** | Fully implemented (Search, Filter, Pagination, Lead Details, Notes, Status updates). | Export to CSV / PDF lead reports. |
+| **Business Settings** | Configured via `.env` and seeded into PostgreSQL table `business_settings`. | In-app GUI dashboard settings screen. |
+| **User Management** | Seeded via CLI (`npm run db:seed`); SQL administration. | In-app team member invitation and RBAC management UI. |
+| **Notifications** | Automated email alerts via n8n (staff alert + customer receipt). | SMS / WhatsApp notifications (Twilio). |
+| **Tenant Model** | Single-tenant per deployment (isolated VPS / Docker stack). | Multi-tenant SaaS dashboard. |
