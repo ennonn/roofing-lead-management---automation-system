@@ -2,9 +2,19 @@ import React, { useState } from "react";
 import { Link, NavLink } from "react-router-dom";
 import { Phone, Shield, Menu, X, ArrowRight } from "lucide-react";
 import { branding } from "../../config/branding";
+import { useBusinessInfo } from "../../context/BusinessInfoContext";
 
 export const Navbar: React.FC = () => {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const { businessInfo } = useBusinessInfo();
+
+  const companyName = businessInfo?.companyName || branding.companyName;
+  const phone = businessInfo?.phone || branding.phone;
+  // If businessInfo has been loaded and explicitly set emergencyPhone (even to null/empty), respect it; otherwise fall back to branding
+  const emergencyPhone =
+    businessInfo !== null
+      ? businessInfo?.emergencyPhone || ""
+      : branding.emergencyPhone || "";
 
   const navLinks = [
     { name: "Home", path: "/" },
@@ -16,8 +26,8 @@ export const Navbar: React.FC = () => {
 
   return (
     <header className="sticky top-0 z-50 bg-white shadow-sm border-b border-slate-200">
-      {/* Top Banner: Emergency Contact (Only rendered when emergencyPhone is configured) */}
-      {branding.emergencyPhone && branding.emergencyPhone.trim().length > 0 && (
+      {/* Top Banner: Emergency Contact (Only rendered when emergencyPhone is configured and not placeholder) */}
+      {emergencyPhone && emergencyPhone.trim().length > 0 && (
         <div className="bg-slate-900 text-slate-200 text-xs sm:text-sm py-1.5 px-4">
           <div className="max-w-7xl mx-auto flex flex-col sm:flex-row justify-between items-center gap-1">
             <div className="flex items-center gap-2">
@@ -26,11 +36,11 @@ export const Navbar: React.FC = () => {
             </div>
             <div className="flex items-center gap-4">
               <a
-                href={`tel:${branding.emergencyPhone.replace(/[^0-9+]/g, "")}`}
+                href={`tel:${emergencyPhone.replace(/[^0-9+]/g, "")}`}
                 className="text-amber-400 hover:text-amber-300 font-semibold flex items-center gap-1"
               >
                 <Phone className="w-3.5 h-3.5" />
-                <span>Emergency: {branding.emergencyPhone}</span>
+                <span>Emergency: {emergencyPhone}</span>
               </a>
             </div>
           </div>
@@ -47,7 +57,7 @@ export const Navbar: React.FC = () => {
             </div>
             <div>
               <span className="block text-xl font-extrabold tracking-tight text-slate-900 leading-tight">
-                {branding.companyName}
+                {companyName}
               </span>
               <span className="block text-xs font-medium text-slate-500">
                 Licensed & Insured Roofing Specialist
@@ -74,13 +84,15 @@ export const Navbar: React.FC = () => {
 
           {/* Direct CTA Button */}
           <div className="hidden lg:flex items-center gap-4">
-            <a
-              href={`tel:${branding.phone.replace(/[^0-9+]/g, "")}`}
-              className="text-sm font-semibold text-slate-700 hover:text-slate-900 flex items-center gap-1.5"
-            >
-              <Phone className="w-4 h-4 text-sky-600" />
-              <span>{branding.phone}</span>
-            </a>
+            {phone && (
+              <a
+                href={`tel:${phone.replace(/[^0-9+]/g, "")}`}
+                className="text-sm font-semibold text-slate-700 hover:text-slate-900 flex items-center gap-1.5"
+              >
+                <Phone className="w-4 h-4 text-sky-600" />
+                <span>{phone}</span>
+              </a>
+            )}
             <Link
               to="/contact"
               className="inline-flex items-center gap-2 bg-sky-600 hover:bg-sky-700 text-white text-sm font-bold px-4 py-2.5 rounded-lg shadow-sm hover:shadow transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-sky-500 focus:ring-offset-2"
@@ -125,13 +137,15 @@ export const Navbar: React.FC = () => {
             ))}
           </nav>
           <div className="pt-3 border-t border-slate-100 space-y-2">
-            <a
-              href={`tel:${branding.phone.replace(/[^0-9+]/g, "")}`}
-              className="w-full flex items-center justify-center gap-2 py-2.5 px-4 text-sm font-bold text-slate-800 bg-slate-100 hover:bg-slate-200 rounded-lg"
-            >
-              <Phone className="w-4 h-4 text-sky-600" />
-              <span>Call Us: {branding.phone}</span>
-            </a>
+            {phone && (
+              <a
+                href={`tel:${phone.replace(/[^0-9+]/g, "")}`}
+                className="w-full flex items-center justify-center gap-2 py-2.5 px-4 text-sm font-bold text-slate-800 bg-slate-100 hover:bg-slate-200 rounded-lg"
+              >
+                <Phone className="w-4 h-4 text-sky-600" />
+                <span>Call Us: {phone}</span>
+              </a>
+            )}
             <Link
               to="/contact"
               onClick={() => setMobileMenuOpen(false)}

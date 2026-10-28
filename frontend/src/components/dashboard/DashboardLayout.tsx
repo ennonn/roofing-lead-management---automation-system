@@ -3,6 +3,7 @@ import { Outlet, NavLink, useNavigate, Link } from "react-router-dom";
 import {
   LayoutDashboard,
   Users,
+  Settings,
   LogOut,
   Menu,
   X,
@@ -48,6 +49,16 @@ export const DashboardLayout: React.FC = () => {
       icon: Users,
       end: false,
     },
+    ...(user?.role === "owner" || user?.role === "admin"
+      ? [
+          {
+            name: "Settings",
+            to: "/dashboard/settings",
+            icon: Settings,
+            end: false,
+          },
+        ]
+      : []),
   ];
 
   return (

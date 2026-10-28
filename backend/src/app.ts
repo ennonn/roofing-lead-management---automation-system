@@ -8,7 +8,7 @@ import { createSessionMiddleware } from "./config/session.js";
 import { errorHandler } from "./middleware/error.middleware.js";
 import { leadSubmissionRateLimiter, generalApiRateLimiter } from "./middleware/rateLimiter.js";
 import { requireAuth, requireRole } from "./middleware/auth.middleware.js";
-import { handleGetPublicBusinessInfo } from "./modules/business/business.controller.js";
+import { createBusinessRouter } from "./modules/business/business.routes.js";
 import { createAuthRouter, AuthRouterOptions } from "./modules/auth/auth.routes.js";
 import { createDashboardRouter, DashboardRouterOptions } from "./modules/dashboard/dashboard.routes.js";
 import { createLeadsRouter, LeadsRouterOptions } from "./modules/leads/leads.routes.js";
@@ -91,8 +91,8 @@ export function createApp(options?: AppOptions): Express {
   // Leads Router (Public Quote Intake & Authenticated Lead Management)
   apiRouter.use("/leads", createLeadsRouter(options?.leadsRouterOptions));
 
-  // Public Business Info
-  apiRouter.get("/business/public-info", handleGetPublicBusinessInfo);
+  // Business Settings & Public Info Router (/api/v1/business)
+  apiRouter.use("/business", createBusinessRouter());
 
   // Mount versioned API prefix
   app.use(env.API_PREFIX, apiRouter);

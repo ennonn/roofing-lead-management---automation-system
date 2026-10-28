@@ -73,23 +73,37 @@ Submits a new roofing inquiry or quote request from the public website or chatbo
 ```
 *Note: `_hp` is an invisible honeypot field. If populated by an automated spam bot, the API silently returns 200 without saving or dispatching.*
 
+
 #### Success Response (`201 Created`)
 ```json
 {
   "success": true,
   "data": {
-    "leadId": "7b3b3a62-4217-48f8-b118-2ad16a69df4a",
+    "leadId": "7b5c898b-201a-4712-87ad-d227eb0c7a5f",
+    "customerName": "Jane Doe",
     "status": "new",
-    "submissionDate": "2026-10-27T14:30:00.000Z"
+    "submissionDate": "2026-10-27T10:30:00.000Z"
   },
   "message": "Thank you! Your quote request has been received. Our team will contact you shortly."
+}
+```
+
+#### Error Response: Paused Quote Intake (`422 Unprocessable Entity`)
+Returned when business availability controls have paused new online submissions:
+```json
+{
+  "success": false,
+  "error": {
+    "code": "QUOTE_INTAKE_PAUSED",
+    "message": "Online quote requests are temporarily paused by business operations. Please contact our office by phone or check back later."
+  }
 }
 ```
 
 ---
 
 ### 2.2. Get Public Business Information
-Retrieves public company details (office phone, emergency line, covered service areas, business hours) for rendering marketing copy and chatbot answers.
+Retrieves dynamic public company details and operational availability notices without requiring a frontend rebuild. Strips private dispatch emails, database identifiers, and internal operational data.
 
 - **Method**: `GET`
 - **Path**: `/api/v1/business/public-info`
@@ -98,17 +112,26 @@ Retrieves public company details (office phone, emergency line, covered service 
 {
   "success": true,
   "data": {
-    "companyName": "Apex Roofing Solutions",
+    "companyName": "Apex Peak Roofing Solutions",
     "phone": "(555) 123-4567",
     "emergencyPhone": "(555) 999-HELP",
-    "dispatchEmail": "info@apexroofingexample.com",
-    "serviceAreas": ["Dallas County", "Collin County", "Tarrant County"],
+    "address": "1040 Industrial Pkwy, Suite 200, Phoenix, AZ 85001",
+    "serviceAreas": ["Phoenix", "Scottsdale", "Tempe", "Mesa"],
     "businessHours": {
       "weekdays": "7:00 AM - 6:00 PM",
       "saturday": "8:00 AM - 2:00 PM",
       "sunday": "Emergency Repairs Only"
     },
-    "licenseNumber": "TX-ROOF-88291"
+    "licenseNumber": "ROC-882910",
+    "availability": {
+      "status": "available",
+      "noticeHeadline": null,
+      "noticeBody": null,
+      "reopenAt": null,
+      "autoResume": false,
+      "acceptQuotesWhenUnavailable": true,
+      "timezone": "America/New_York"
+    }
   }
 }
 ```
@@ -470,9 +493,83 @@ Appends a timestamped follow-up note to a lead, associated with the authenticate
 
 ---
 
-### 4.6. Business Settings Architecture Note
-- **Public Business Info**: The public endpoint [`GET /api/v1/business/public-info`](#22-get-public-business-information) provides public company branding, contact details, operating hours, and service areas.
-- **Administrative Editing Status**: **Not implemented as an in-app API endpoint**. Operational business settings are configured at deployment time via environment variables (`COMPANY_*`, `VITE_*`) and seeded into the `business_settings` database table during initial deployment (`npm run db:seed`). There are no authenticated `PUT /api/v1/business/settings` routes or in-app settings modification screens in the MVP.
+### 4.6. Get Business Settings (Owner / Admin)
+Retrieves the complete internal and public business configuration, including dispatch email, license number, service areas, and operational availability status.
+
+- **Method**: `GET`
+- **Path**: `/api/v1/business/settings`
+- **Authentication**: Required (`owner` or `admin` role). Staff users receive `403 Forbidden`.
+- **Success Response (`200 OK`)**:
+```json
+{
+  "success": true,
+  "data": {
+    "id": "e3061546-77e8-468a-b9c1-ebbc8d1891e4",
+    "companyName": "Apex Peak Roofing Solutions",
+    "phone": "(555) 123-4567",
+    "emergencyPhone": "(555) 999-HELP",
+    "dispatchEmail": "dispatch@apexroofingexample.com",
+    "address": "1040 Industrial Pkwy, Suite 200, Phoenix, AZ 85001",
+    "serviceAreas": ["Phoenix", "Scottsdale", "Tempe", "Mesa"],
+    "businessHours": {
+      "weekdays": "7:00 AM - 6:00 PM",
+      "saturday": "8:00 AM - 2:00 PM",
+      "sunday": "Emergency Repairs Only"
+    },
+    "licenseNumber": "ROC-882910",
+    "availabilityStatus": "temporarily_unavailable",
+    "noticeHeadline": "Severe Storm Weather Hold",
+    "noticeBody": "Field crews are temporarily paused for hazardous weather safety.",
+    "reopenAt": "2026-11-15T14:00:00.000Z",
+    "autoResume": true,
+    "acceptQuotesWhenUnavailable": false,
+    "timezone": "America/New_York",
+    "createdAt": "2026-10-01T00:00:00.000Z",
+    "updatedAt": "2026-10-29T02:00:00.000Z"
+  }
+}
+```
+
+---
+
+### 4.7. Update Business Settings (Owner / Admin)
+Modifies persisted business identity, contact channels, service coverage areas, and operational availability rules. Changes take effect dynamically without requiring server or frontend rebuilds.
+
+- **Method**: `PATCH`
+- **Path**: `/api/v1/business/settings`
+- **Authentication**: Required (`owner` or `admin` role).
+- **Security Headers**:
+  - `Origin`: Must match `CLIENT_ORIGIN`.
+  - `X-Requested-With: XMLHttpRequest` or `X-CSRF-Token`: Required for CSRF defense.
+- **Request Body (Zod Validated)**:
+```json
+{
+  "companyName": "Apex Peak Roofing Specialists",
+  "phone": "(555) 123-4567",
+  "emergencyPhone": "(555) 999-HELP",
+  "dispatchEmail": "leads@apexpeakroofing.com",
+  "address": "1040 Industrial Pkwy, Suite 200, Phoenix, AZ 85001",
+  "serviceAreas": ["Phoenix", "Scottsdale", "Tempe", "Chandler", "Gilbert"],
+  "availabilityStatus": "temporarily_unavailable",
+  "noticeHeadline": "Weather Advisory: Severe Storm Hold",
+  "noticeBody": "Field inspections are paused while high winds pass. Emergency tarping remains active.",
+  "reopenAt": "2026-11-15T14:00:00.000Z",
+  "autoResume": true,
+  "acceptQuotesWhenUnavailable": false,
+  "timezone": "America/New_York"
+}
+```
+- **Validation Rules**:
+  - `availabilityStatus`: Must be one of `"available"`, `"temporarily_unavailable"`, `"unavailable_indefinite"`.
+  - `autoResume`: Only permitted if `availabilityStatus === "temporarily_unavailable"`.
+  - `reopenAt`: Valid ISO-8601 string. When `autoResume: true`, `reopenAt` is mandatory and cannot be null.
+  - `timezone`: Must be a valid IANA timezone string (e.g. `America/New_York`, `America/Chicago`).
+- **Success Response (`200 OK`)**:
+  Returns the updated `BusinessSettings` object matching the schema in `GET /api/v1/business/settings`.
+- **Error Responses**:
+  - `401 Unauthorized`: Missing session cookie.
+  - `403 Forbidden`: Insufficient role permissions (`staff`) or CSRF check failure.
+  - `422 Unprocessable Entity`: Validation failure (invalid enum, malformed email, missing reopening time when autoResume enabled).
 
 ---
 

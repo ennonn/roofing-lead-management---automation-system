@@ -1,8 +1,10 @@
 import { randomUUID } from "node:crypto";
 import { eq, and, or, ilike, asc, desc, sql } from "drizzle-orm";
 import { getDb, AppDatabase } from "../../db/index.js";
-import { leads, leadNotes, users, outboxEvents } from "../../db/schema.js";
+import { leads, leadNotes, users, outboxEvents, businessSettings } from "../../db/schema.js";
 import { env } from "../../config/env.js";
+import { QuoteIntakePausedError } from "../../middleware/error.middleware.js";
+import { checkQuoteIntakeAllowed } from "../business/business.service.js";
 import type {
   Lead,
   LeadListItem,
@@ -45,8 +47,19 @@ export class LeadsService {
       };
     }
 
-    // 2. Transactional Outbox Pattern: Atomic commit of lead and outbox event
+    // 2. Availability check: verify whether quote intake is currently permitted
+    const intakeCheck = await checkQuoteIntakeAllowed(this.db);
+    if (!intakeCheck.allowed) {
+      throw new QuoteIntakePausedError(intakeCheck.reason);
+    }
+
+    // 3. Transactional Outbox Pattern: Atomic commit of lead and outbox event
     return await this.db.transaction(async (tx) => {
+      // Retrieve dynamic company branding / dispatch email from business settings if present
+      const [settings] = await tx.select().from(businessSettings).limit(1);
+      const companyName = settings?.companyName || env.COMPANY_NAME;
+      const dispatchEmail = settings?.dispatchEmail || env.COMPANY_DISPATCH_EMAIL || env.INITIAL_OWNER_EMAIL;
+
       const [savedLead] = await tx
         .insert(leads)
         .values({
@@ -75,8 +88,8 @@ export class LeadsService {
         preferredContactMethod: savedLead.preferredContactMethod,
         leadSource: savedLead.leadSource,
         submissionDate: savedLead.submissionDate.toISOString(),
-        companyName: env.COMPANY_NAME,
-        dispatchEmail: env.COMPANY_DISPATCH_EMAIL || env.INITIAL_OWNER_EMAIL,
+        companyName,
+        dispatchEmail,
         staffNotificationEmail: process.env.STAFF_NOTIFICATION_EMAIL || env.INITIAL_OWNER_EMAIL,
       };
 

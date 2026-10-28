@@ -27,11 +27,11 @@ This document is the authoritative configuration reference for the single-tenant
 
 ## 1. Configuration Model & Precedence
 
-The application follows the **12-factor configuration pattern**:
-- **Host `.env` File**: The single source of truth on the deployment host (permission `chmod 600 .env`).
-- **Build Arguments (`args`)**: Passed to Docker during `docker compose build` to bake client branding into the static React bundle.
+The application follows the **12-factor configuration pattern** with dynamic runtime database precedence:
+- **Host `.env` File**: The single source of truth for deployment secrets, credentials, and initial deployment defaults (permission `chmod 600 .env`).
+- **Build Arguments (`args`)**: Passed to Docker during `docker compose build` to bake initial fallback client branding into the static React bundle.
 - **Container Environment (`environment`)**: Injected into runtime containers (`backend`, `db`, `n8n`, `proxy`) via `docker-compose.yml`.
-- **Database Seed (`business_settings`)**: Initialized during `npm run db:seed` from `COMPANY_*` variables to provide initial database-backed business settings.
+- **Database Source of Truth (`business_settings`)**: Initialized during `npm run db:seed` from `COMPANY_*` variables. Business contact details, service areas, and availability states saved via `/dashboard/settings` take immediate dynamic precedence at runtime without requiring `.env` modification or frontend rebuilds.
 - **n8n SQLite Vault**: Headlessly provisioned via [`scripts/provision-n8n.sh`](file:///Users/aljonfernando/Documents/roofing-lead-management-&-automation-system/scripts/provision-n8n.sh) from `.env`.
 
 > [!CAUTION]

@@ -52,7 +52,7 @@ The frontend is a single-page React application built with TypeScript, Tailwind 
 
 ### 1.2. Private Dashboard Layout (`DashboardLayout`)
 - **Source File**: [`src/components/dashboard/DashboardLayout.tsx`](file:///Users/aljonfernando/Documents/roofing-lead-management-&-automation-system/frontend/src/components/dashboard/DashboardLayout.tsx)
-- **Routes Covered**: `/dashboard`, `/dashboard/leads`, `/dashboard/leads/:id`.
+- **Routes Covered**: `/dashboard`, `/dashboard/leads`, `/dashboard/leads/:id`, `/dashboard/settings`.
 - **Access Guard**: Wrapped in [`ProtectedRoute`](file:///Users/aljonfernando/Documents/roofing-lead-management-&-automation-system/frontend/src/components/auth/ProtectedRoute.tsx). Redirects unauthenticated requests to `/login` preserving intended destination in navigation state.
 - **Structure**:
   - **Desktop Sidebar** (`md:flex`): Sticky left sidebar (72rem / 288px) in sleek dark mode (`bg-slate-900 border-slate-800`).
@@ -60,6 +60,7 @@ The frontend is a single-page React application built with TypeScript, Tailwind 
   - **Navigation Links**:
     - *Overview*: `/dashboard` (icon: `LayoutDashboard`).
     - *Leads*: `/dashboard/leads` (icon: `Users`).
+    - *Settings*: `/dashboard/settings` (icon: `Settings`, dynamically displayed for `owner` and `admin` roles).
   - **User Profile Area**: Displays authenticated user's `fullName`, `email`, and role badge (`Owner`, `Admin`, or `Staff`).
   - **Header Actions**: "View Public Website" link (`/`) opening in current tab, and "Sign Out" button triggering CSRF-protected session termination via [`auth.service.ts`](file:///Users/aljonfernando/Documents/roofing-lead-management-&-automation-system/frontend/src/services/auth.service.ts).
 
@@ -239,15 +240,45 @@ The frontend is a single-page React application built with TypeScript, Tailwind 
 
 ---
 
+### 4.4. Business Settings & Availability Screen (`/dashboard/settings`)
+- **Source File**: [`src/pages/BusinessSettingsPage.tsx`](file:///Users/aljonfernando/Documents/roofing-lead-management-&-automation-system/frontend/src/pages/BusinessSettingsPage.tsx)
+- **Route**: `/dashboard/settings`
+- **Authentication & RBAC**: Restricted to `owner` and `admin` roles. Staff roles receive an explicit "Access Restricted" alert.
+- **Header Actions**:
+  - Unsaved Changes tracking badge (`isDirty`).
+  - "Reset" button restoring loaded database state.
+  - "Save Changes" primary action button with in-flight spinner.
+- **Tabs Layout**:
+  1. **General Information**:
+     - Business / Brand Name (required).
+     - Primary Office Phone (required).
+     - 24/7 Emergency Storm Leak Line (optional; cleanly suppresses emergency banner if blank).
+     - Internal Lead Dispatch Email (required, validated format, strictly private).
+     - State Contractor License # (optional).
+     - Physical Business Office Address (optional).
+  2. **Service Areas & Hours**:
+     - Service Areas Tag Chip Manager: Enter municipality name and click "Add Area" or press Enter. Each area renders a removable pill badge.
+     - Operational Business Hours: Displays active default dispatch schedule, clearly identifying that fine-grained daily schedule overrides are deferred to Milestone 13.
+  3. **Availability & Public Notices**:
+     - Status Radio Cards: `Available` (normal operations), `Temporarily Closed` (storm/maintenance hold), `Closed Indefinitely` (extended seasonal hiatus).
+     - Public Notice Headline & Body text inputs.
+     - Scheduled Reopening Date & Time (`datetime-local` picker) with clearly labeled business timezone.
+     - Auto-Resume Toggle: Automatically restores availability status once reopening timestamp is reached.
+     - Online Quote Intake Toggle: Independent control allowing quotes with delay notice, or completely pausing public form intake.
+     - Pause Confirmation Modal: Explains customer impact and requires confirmation before pausing intake.
+     - Live Public Notice Preview: Renders real-time preview of the `AvailabilityNoticeBanner`.
+
+---
+
 ## 5. Audited Feature Realities: Implemented vs. Unimplemented Settings
 
 The codebase was strictly audited to reconcile planning documents (`Overview.md`, `REQUIREMENTS.md`) with the actual code:
 
 ### 5.1. Business Settings Reality
-- **Database Table**: Exists (`business_settings` in PostgreSQL). Populated with initial client details during `npm run db:seed`.
-- **Public API Endpoint**: Exists (`GET /api/v1/business/public-info`), returning public branding, phone numbers, service areas, and business hours.
-- **Dashboard UI / Screen**: **DOES NOT EXIST**. There is no `/dashboard/settings` route, no settings navigation item in `DashboardLayout.tsx`, and no form to edit business details in the frontend.
-- **Administrative Modification**: Settings are managed at deployment time via environment variables (`COMPANY_*`, `VITE_*`) and database seeds.
+- **Database Table**: Exists (`business_settings` in PostgreSQL) with dynamic availability columns added in migration `0004_business_availability.sql`.
+- **Public API Endpoint**: Exists (`GET /api/v1/business/public-info`), returning dynamic branding, phone numbers, service areas, and availability notice while strictly stripping internal dispatch emails.
+- **Dashboard UI / Screen**: **Fully implemented** at `/dashboard/settings` via [`src/pages/BusinessSettingsPage.tsx`](file:///Users/aljonfernando/Documents/roofing-lead-management-&-automation-system/frontend/src/pages/BusinessSettingsPage.tsx).
+- **Administrative Modification**: Authenticated owners and admins modify company settings, service areas, and availability states with live public site synchronization without requiring frontend rebuilds.
 
 ### 5.2. User Management Reality
 - **Database Table**: Exists (`users` in PostgreSQL) storing `email`, `password_hash` (bcrypt), `full_name`, `role`, and `is_active`.

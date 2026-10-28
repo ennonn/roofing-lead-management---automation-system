@@ -54,6 +54,13 @@ export const businessSettings = pgTable("business_settings", {
   serviceAreas: jsonb("service_areas").notNull().default([]),
   businessHours: jsonb("business_hours").notNull().default({}),
   licenseNumber: varchar("license_number", { length: 100 }),
+  availabilityStatus: varchar("availability_status", { length: 30 }).notNull().default("available"),
+  noticeHeadline: varchar("notice_headline", { length: 150 }),
+  noticeBody: text("notice_body"),
+  reopenAt: timestamp("reopen_at", { withTimezone: true }),
+  autoResume: boolean("auto_resume").notNull().default(false),
+  acceptQuotesWhenUnavailable: boolean("accept_quotes_when_unavailable").notNull().default(false),
+  timezone: varchar("timezone", { length: 50 }).notNull().default("America/New_York"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });

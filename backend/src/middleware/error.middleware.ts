@@ -2,12 +2,43 @@ import { Request, Response, NextFunction } from "express";
 import { ZodError } from "zod";
 import { env } from "../config/env.js";
 
+export class AppError extends Error {
+  constructor(
+    public statusCode: number,
+    public code: string,
+    message: string,
+    public details?: Array<{ field?: string; message: string }>
+  ) {
+    super(message);
+    this.name = "AppError";
+  }
+}
+
+export class QuoteIntakePausedError extends AppError {
+  constructor(message = "Quote requests are temporarily paused. Please contact us via phone or check back later.") {
+    super(422, "QUOTE_INTAKE_PAUSED", message);
+    this.name = "QuoteIntakePausedError";
+  }
+}
+
 export function errorHandler(
   err: unknown,
   _req: Request,
   res: Response,
   _next: NextFunction
 ): void {
+  // 1. Known Application Errors
+  if (err instanceof AppError) {
+    res.status(err.statusCode).json({
+      success: false,
+      error: {
+        code: err.code,
+        message: err.message,
+        details: err.details,
+      },
+    });
+    return;
+  }
   // 1. Zod Schema Validation Errors
   if (err instanceof ZodError) {
     const details = err.errors.map((e) => ({

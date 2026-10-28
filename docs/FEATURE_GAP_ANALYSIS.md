@@ -197,12 +197,26 @@ graph TD
 
 ---
 
-### Milestone 11 — Business Settings, Availability Controls & Dynamic Public Information *(RECOMMENDED NEXT)*
+### Milestone 11 — Business Settings, Availability Controls & Dynamic Public Information *(COMPLETED)*
 
+- **Status**: **Completed & Verified**.
 - **Objective**: Empower the roofing business owner to manage company information, operating hours, service areas, and availability/notice states through a secure dashboard GUI, with full backend policy enforcement and dynamic public website synchronization.
-- **Scope & System Areas Likely to Change**:
-  - **Database Migration**: Extend `business_settings` table in `backend/src/db/schema.ts` with availability columns (`availability_status`, `notice_headline`, `notice_body`, `reopen_at`, `auto_resume`, `accept_quotes_when_unavailable`).
-  - **Shared Types**: Update `@roofing/shared-types` with `BusinessSettings`, `UpdateBusinessSettingsDto`, and `AvailabilityStatus` definitions.
+- **Scope & Implemented Features**:
+  - **Database Migration**: Created `0004_business_availability.sql` extending `business_settings` with `availability_status`, `notice_headline`, `notice_body`, `reopen_at`, `auto_resume`, `accept_quotes_when_unavailable`, and `timezone`.
+  - **Shared Types**: Added `BusinessSettings`, `UpdateBusinessSettingsDto`, `AvailabilityStatus`, `PublicAvailabilityInfo` to `@roofing/shared-types`.
+  - **Backend API**:
+    - Authenticated `GET /api/v1/business/settings` (Owner/Admin only).
+    - Authenticated `PATCH /api/v1/business/settings` (Owner/Admin only, CSRF-protected, Zod-validated).
+    - Public `GET /api/v1/business/public-info` returning dynamic branding and availability notices while stripping private dispatch emails and database IDs.
+    - Updated `POST /api/v1/leads` enforcing quote intake policy and rejecting with `422 QUOTE_INTAKE_PAUSED` without creating lead or outbox records.
+    - Concurrency-safe lazy auto-reopening when `auto_resume = true` and `reopen_at <= now()`.
+  - **Frontend UI & Components**:
+    - `BusinessInfoProvider` & `useBusinessInfo` context for dynamic public information with fallback branding.
+    - `AvailabilityNoticeBanner` component rendering dynamic closure alerts and timezone-aware reopening times.
+    - `QuoteForm` rendering paused intake card with direct call links when intake is paused, and delayed notice banner when accepting with notice.
+    - Dashboard settings screen [`BusinessSettingsPage.tsx`](file:///Users/aljonfernando/Documents/roofing-lead-management-&-automation-system/frontend/src/pages/BusinessSettingsPage.tsx) at `/dashboard/settings` with **General Information**, **Service Areas & Hours**, and **Availability & Public Notices** tabs, live preview, and pause confirmation modal.
+    - Settings navigation item in `DashboardLayout.tsx` for owner/admin roles.
+  - **Tests**: 18 new backend assertions in `business.settings.test.ts`, new frontend test suites in `BusinessSettingsPage.test.tsx`, `AvailabilityNoticeBanner.test.tsx`, and `QuoteForm.availability.test.tsx`. All 276 tests passing cleanly across the monorepo.
   - **Backend API**:
     - Add authenticated `GET /api/v1/business/settings` (Owner/Admin only).
     - Add authenticated `PATCH /api/v1/business/settings` (Owner/Admin only, CSRF-protected, validated with Zod).
@@ -303,26 +317,14 @@ Before beginning implementation, the following architectural decisions and depen
 
 ## 7. Recommended Next Implementation Milestone
 
-We recommend proceeding immediately with:
+### **Milestone 11 — Business Settings, Availability Controls & Dynamic Public Information — COMPLETED**
 
-### **Milestone 11 — Business Settings, Availability Controls & Dynamic Public Information**
+All acceptance criteria for Milestone 11 have been successfully implemented, verified, and tested across backend, frontend, and database tiers.
 
-#### Explicit Acceptance Criteria for Milestone 11:
-1. **Database Schema & Migrations**:
-   - Migration `0004_business_availability.sql` successfully applies to PostgreSQL, extending `business_settings` with `availability_status`, `notice_headline`, `notice_body`, `reopen_at`, `auto_resume`, and `accept_quotes_when_unavailable`.
-2. **Authenticated Business Settings API**:
-   - `GET /api/v1/business/settings` returns the complete settings record for authenticated `owner` and `admin` users.
-   - `PATCH /api/v1/business/settings` securely updates settings, validates all fields (phone formats, email regex, string lengths), verifies CSRF tokens, and rejects unauthorized roles (`staff` or unauthenticated).
-3. **Public Availability & Intake Enforcement**:
-   - `GET /api/v1/business/public-info` serves public business details and active availability notice without leaking internal dispatch emails or database IDs.
-   - When `availability_status !== 'available'` and `accept_quotes_when_unavailable === false`:
-     - `POST /api/v1/leads` rejects submissions with `HTTP 422` and code `QUOTE_INTAKE_PAUSED`.
-     - The public `QuoteForm` renders an informative "Intake Temporarily Paused" message displaying company phone and emergency hotline.
-   - When `auto_resume === true` and `reopen_at <= NOW()`, the backend automatically transitions status back to `available`.
-4. **Owner Dashboard UI**:
-   - A dedicated **Settings** screen is added to `DashboardLayout` under route `/dashboard/settings`.
-   - Allows owner to edit company details, service areas, operating hours, and operational availability.
-   - Includes live notice preview and confirmation modal for quote-intake pause.
-5. **Quality & Regression**:
-   - All existing 234 test cases remain green.
-   - New comprehensive test suites added covering settings validation, availability state transitions, and intake rejection policies.
+#### Recommended Next Step:
+
+### **Milestone 12 — Account Security & Staff User Management**
+
+- **Objective**: Implement secure staff account management, self-service password changes, password reset flows, and audit logs.
+- **Estimated Effort**: 3–4 days.
+- **Prerequisites**: Milestone 11 complete (satisfied).

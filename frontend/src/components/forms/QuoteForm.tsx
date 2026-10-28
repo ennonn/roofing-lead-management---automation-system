@@ -5,10 +5,13 @@ import {
   ShieldCheck,
   Send,
   Phone,
+  Clock,
 } from "lucide-react";
 import type { CreateLeadDto } from "@roofing/shared-types";
 import { branding } from "../../config/branding";
 import { Button } from "../common/Button";
+import { useBusinessInfo } from "../../context/BusinessInfoContext";
+import { formatReopenDate } from "../common/AvailabilityNoticeBanner";
 import {
   validateQuoteForm,
   submitQuoteRequest,
@@ -38,6 +41,21 @@ export const QuoteForm: React.FC<QuoteFormProps> = ({
   onSuccess,
   className = "",
 }) => {
+  const { businessInfo } = useBusinessInfo();
+  const availability = businessInfo?.availability;
+  const isPaused =
+    availability &&
+    availability.status !== "available" &&
+    availability.acceptQuotesWhenUnavailable === false;
+  const isDelayedIntake =
+    availability &&
+    availability.status !== "available" &&
+    availability.acceptQuotesWhenUnavailable === true;
+
+  const companyName = businessInfo?.companyName || branding.companyName;
+  const phone = businessInfo?.phone || branding.phone;
+  const emergencyPhone = businessInfo?.emergencyPhone || branding.emergencyPhone;
+
   const [formData, setFormData] = useState<CreateLeadDto>(initialFormState);
   const [fieldErrors, setFieldErrors] = useState<FormErrors>({});
   const [serverError, setServerError] = useState<string | null>(null);
@@ -126,6 +144,73 @@ export const QuoteForm: React.FC<QuoteFormProps> = ({
   };
 
   // ============================================================================
+  // Paused Intake State (Online quote submission suspended)
+  // ============================================================================
+  if (isPaused) {
+    return (
+      <div
+        data-testid="quote-intake-paused"
+        className={`bg-amber-50/90 border border-amber-300 rounded-2xl p-8 sm:p-10 text-center space-y-6 shadow-sm ${className}`}
+        role="region"
+        aria-label="Quote Intake Temporarily Paused"
+      >
+        <div className="w-16 h-16 bg-amber-100 text-amber-700 rounded-full flex items-center justify-center mx-auto shadow-xs">
+          <Clock className="w-10 h-10" aria-hidden="true" />
+        </div>
+
+        <div className="space-y-2 max-w-lg mx-auto">
+          <h3 className="text-2xl font-extrabold text-slate-900 tracking-tight">
+            {availability?.noticeHeadline || availability?.headline || "Online Quote Intake Temporarily Paused"}
+          </h3>
+          <p className="text-sm text-slate-700 leading-relaxed">
+            {availability?.noticeBody ||
+              availability?.body ||
+              "We are temporarily not accepting new online quote requests at this time. Please check back soon or reach out by phone for urgent inquiries."}
+          </p>
+          {availability?.reopenAt && (
+            <div className="inline-flex items-center gap-2 mt-2 px-3 py-1.5 rounded-lg bg-amber-100/80 text-amber-900 text-xs font-medium">
+              <Clock className="w-4 h-4 text-amber-700 shrink-0" />
+              <span>
+                Expected reopening:{" "}
+                <strong>
+                  {formatReopenDate(availability.reopenAt, availability.timezone)}
+                </strong>
+              </span>
+            </div>
+          )}
+        </div>
+
+        <div className="text-xs text-slate-600 max-w-md mx-auto leading-relaxed">
+          For urgent roofing assistance or emergency leak repairs, our team can still be contacted directly:
+        </div>
+
+        <div className="pt-2 flex flex-col sm:flex-row items-center justify-center gap-3">
+          {phone && (
+            <Button
+              variant="secondary"
+              size="md"
+              href={`tel:${phone.replace(/[^0-9+]/g, "")}`}
+              leftIcon={<Phone className="h-4 w-4 text-sky-400" aria-hidden="true" />}
+            >
+              Call Office: {phone}
+            </Button>
+          )}
+          {emergencyPhone && (
+            <Button
+              variant="emergency"
+              size="md"
+              href={`tel:${emergencyPhone.replace(/[^0-9+]/g, "")}`}
+              leftIcon={<Phone className="h-4 w-4 text-slate-950" aria-hidden="true" />}
+            >
+              Emergency Service: {emergencyPhone}
+            </Button>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  // ============================================================================
   // Success Confirmation State
   // ============================================================================
   if (successData) {
@@ -168,21 +253,23 @@ export const QuoteForm: React.FC<QuoteFormProps> = ({
         </div>
 
         <div className="text-xs text-slate-600 max-w-md mx-auto leading-relaxed">
-          An authorized roofing specialist from <strong>{branding.companyName}</strong> will review your request and contact you shortly to confirm your inspection.
+          An authorized roofing specialist from <strong>{companyName}</strong> will review your request and contact you shortly to confirm your inspection.
         </div>
 
         <div className="pt-2 flex flex-col sm:flex-row items-center justify-center gap-3">
           <Button variant="outline" size="md" onClick={handleReset}>
             Submit Another Project
           </Button>
-          <Button
-            variant="secondary"
-            size="md"
-            href={`tel:${branding.phone.replace(/[^0-9+]/g, "")}`}
-            leftIcon={<Phone className="h-4 w-4 text-sky-400" aria-hidden="true" />}
-          >
-            Call Office: {branding.phone}
-          </Button>
+          {phone && (
+            <Button
+              variant="secondary"
+              size="md"
+              href={`tel:${phone.replace(/[^0-9+]/g, "")}`}
+              leftIcon={<Phone className="h-4 w-4 text-sky-400" aria-hidden="true" />}
+            >
+              Call Office: {phone}
+            </Button>
+          )}
         </div>
       </div>
     );
@@ -209,6 +296,34 @@ export const QuoteForm: React.FC<QuoteFormProps> = ({
           Complete project specifications with zero cost or obligation. We do not sell or share your contact data.
         </p>
       </div>
+
+      {/* Delayed Intake Notice when business is unavailable but quotes are still accepted */}
+      {isDelayedIntake && (
+        <div
+          data-testid="delayed-intake-notice"
+          className="p-4 rounded-xl bg-amber-50 border border-amber-200 text-amber-900 text-sm flex items-start gap-3 shadow-xs"
+          role="status"
+          aria-live="polite"
+        >
+          <Clock className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" aria-hidden="true" />
+          <div className="space-y-1">
+            <div className="font-semibold">
+              {availability?.noticeHeadline || availability?.headline || "Notice: Limited Business Availability"}
+            </div>
+            <p className="text-xs text-amber-800 leading-relaxed">
+              {availability?.noticeBody ||
+                availability?.body ||
+                "We are currently operating with limited availability. You may still submit your quote request, and our estimators will follow up as soon as normal operations resume."}
+            </p>
+            {availability?.reopenAt && (
+              <p className="text-xs text-amber-700 font-medium">
+                Expected resumption:{" "}
+                <strong>{formatReopenDate(availability.reopenAt, availability.timezone)}</strong>
+              </p>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Top-level Server / Validation Error Banner */}
       {serverError && (

@@ -115,16 +115,22 @@ sequenceDiagram
     Browser->>Browser: Client-side validation & honeypot (_hp) check
     Browser->>API: POST /api/v1/leads (CreateLeadDto JSON)
     API->>API: Rate limiter check (5 per 10m) & Zod server-side validation
+    API->>DB: Check business availability & quote intake policy (checkQuoteIntakeAllowed)
 
-    rect rgb(240, 248, 255)
-        Note over API,DB: Single ACID Database Transaction
-        API->>DB: INSERT INTO leads (status='new', automation_status='pending')
-        API->>DB: INSERT INTO outbox_events (aggregate_id=lead.id, payload=eventPayload, idempotency_key=UUID, status='pending')
-        DB-->>API: Transaction Committed (Lead ID generated)
+    alt Quote Intake Paused
+        API-->>Browser: HTTP 422 Unprocessable Entity { error: { code: 'QUOTE_INTAKE_PAUSED' } }
+        Browser-->>Homeowner: Displays intake paused card with phone & emergency call links
+    else Intake Allowed
+        rect rgb(240, 248, 255)
+            Note over API,DB: Single ACID Database Transaction
+            API->>DB: INSERT INTO leads (status='new', automation_status='pending')
+            API->>DB: INSERT INTO outbox_events (aggregate_id=lead.id, payload=eventPayload, idempotency_key=UUID, status='pending')
+            DB-->>API: Transaction Committed (Lead ID generated)
+        end
+
+        API-->>Browser: HTTP 201 Created { success: true, data: { leadId, referenceId } }
+        Browser-->>Homeowner: Displays confirmation panel with turnaround estimate
     end
-
-    API-->>Browser: HTTP 201 Created { success: true, data: { leadId, referenceId } }
-    Browser-->>Homeowner: Displays confirmation panel with turnaround estimate
 
     rect rgb(255, 250, 240)
         Note over Worker,N8N: Asynchronous Outbox Delivery Loop (Every 5s)
@@ -272,7 +278,24 @@ graph TD
 - **Implementation**: [`src/components/chat/ChatbotWidget.tsx`](file:///Users/aljonfernando/Documents/roofing-lead-management-&-automation-system/frontend/src/components/chat/ChatbotWidget.tsx) and [`src/config/chatbotTree.ts`](file:///Users/aljonfernando/Documents/roofing-lead-management-&-automation-system/frontend/src/config/chatbotTree.ts).
 - **Zero External AI Dependencies**: Runs 100% in the client browser with zero latency, zero token costs, and zero risk of hallucinating pricing, warranty guarantees, or unverified claims.
 - **Vanity Phone Normalization**: Automatically converts keypad vanity letters (e.g. `(555) 999-HELP` -> `(555) 999-4357`) into standard dialable RFC 3966 `tel:` links.
-- **Graceful Fallbacks**: If `emergencyPhone` is unconfigured, the emergency node cleanly falls back to the primary office phone number or the `/contact` form.
+---
+
+### 4.7. Dynamic Business Availability & Lazy Scheduled Reopening
+
+The system provides dynamic business availability controls without requiring a frontend rebuild or container restart:
+
+1. **Persisted Source of Truth**: Availability settings reside in PostgreSQL `business_settings` and are administered through `/dashboard/settings` by authorized `owner` and `admin` roles.
+2. **Three Operational States**:
+   - `available`: Standard operations; no closure banner.
+   - `temporarily_unavailable`: Displays public notice headline and body with optional scheduled reopening time.
+   - `unavailable_indefinite`: Displays public notice without inventing a reopening time.
+3. **Independent Quote Intake Policy**:
+   - Controlled by `accept_quotes_when_unavailable`.
+   - When active during closures, public quote requests remain usable with a delayed follow-up notice banner.
+   - When paused, the public quote form is replaced by an advisory notice with direct calling links. In addition, the backend enforces the policy on `POST /api/v1/leads`, rejecting attempts with `422 QUOTE_INTAKE_PAUSED` without creating lead or outbox records.
+4. **Concurrency-Safe Lazy Reopening**:
+   - When `auto_resume = true` and `reopen_at <= now()`, requests to `getPublicBusinessInfo()` or `checkQuoteIntakeAllowed()` execute an atomic database transition restoring `available` status.
+   - Operates without requiring an external OS cron daemon or dedicated background service.
 
 ---
 
@@ -284,7 +307,7 @@ PostgreSQL 16 is the **sole system of record**. All schema definitions are manag
 | :--- | :--- | :--- | :--- |
 | `users` | `0000` | `id` (UUID) | Authenticated user accounts (`owner`, `admin`, `staff`). Passwords hashed with bcrypt (cost factor 12). |
 | `sessions` | `0000` | `sid` (varchar) | Persistent HTTP session store managed by `connect-pg-simple`. |
-| `business_settings` | `0000` | `id` (UUID) | Client operational identity, phone numbers, license, service areas, and business hours. Populated during `db:seed`. |
+| `business_settings` | `0000`–`0004` | `id` (UUID) | Client operational identity, phone numbers, license, service areas, business hours, and dynamic availability controls. |
 | `leads` | `0000` | `id` (UUID) | Inbound customer quote inquiries, contact data, service requests, lead status, and automation delivery status. |
 | `lead_notes` | `0000` | `id` (UUID) | User-attributed follow-up notes linked to `leads.id` with author foreign key referencing `users.id`. |
 | `outbox_events` | `0000` | `id` (UUID) | Transactional outbox queue for reliable asynchronous dispatch to n8n. |
@@ -296,10 +319,10 @@ PostgreSQL 16 is the **sole system of record**. All schema definitions are manag
 
 | Subsystem / Capability | Current Implemented Status | Future Roadmap / Deferred |
 | :--- | :--- | :--- |
-| **Public Website** | Fully implemented (Home, Services, About, Service Areas, Contact, Privacy). | Photo upload / roof damage image attachments. |
+| **Public Website** | Fully implemented (Home, Services, About, Service Areas, Contact, Privacy, Dynamic Notice Banner). | Photo upload / roof damage image attachments. |
 | **Chatbot Widget** | Deterministic decision tree with vanity phone normalization. | LLM / conversational AI agent integration. |
 | **Lead Management** | Fully implemented (Search, Filter, Pagination, Lead Details, Notes, Status updates). | Export to CSV / PDF lead reports. |
-| **Business Settings** | Configured via `.env` and seeded into PostgreSQL table `business_settings`. | In-app GUI dashboard settings screen. |
-| **User Management** | Seeded via CLI (`npm run db:seed`); SQL administration. | In-app team member invitation and RBAC management UI. |
+| **Business Settings** | Fully implemented in-app GUI dashboard settings (`/dashboard/settings`), dynamic public notice banner, quote intake enforcement, and lazy scheduled reopening. | Granular holiday schedule overrides and shift calendar model (Milestone 13). |
+| **User Management** | Seeded via CLI (`npm run db:seed`); SQL administration. | In-app team member invitation and RBAC management UI (Milestone 12). |
 | **Notifications** | Automated email alerts via n8n (staff alert + customer receipt). | SMS / WhatsApp notifications (Twilio). |
 | **Tenant Model** | Single-tenant per deployment (isolated VPS / Docker stack). | Multi-tenant SaaS dashboard. |

@@ -139,6 +139,23 @@ export interface BusinessHours {
   [key: string]: string | undefined;
 }
 
+export type AvailabilityStatus =
+  | "available"
+  | "temporarily_unavailable"
+  | "unavailable_indefinite";
+
+export interface PublicAvailabilityInfo {
+  status: AvailabilityStatus;
+  noticeHeadline: string | null;
+  noticeBody: string | null;
+  headline?: string | null;
+  body?: string | null;
+  reopenAt: string | null;
+  autoResume: boolean;
+  acceptQuotesWhenUnavailable: boolean;
+  timezone: string;
+}
+
 export interface BusinessSettings {
   id: string;
   companyName: string;
@@ -149,18 +166,45 @@ export interface BusinessSettings {
   serviceAreas: string[];
   businessHours: BusinessHours;
   licenseNumber?: string | null;
+  availabilityStatus: AvailabilityStatus;
+  noticeHeadline?: string | null;
+  noticeBody?: string | null;
+  reopenAt?: string | null;
+  autoResume: boolean;
+  acceptQuotesWhenUnavailable: boolean;
+  timezone: string;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface UpdateBusinessSettingsDto {
+  companyName?: string;
+  phone?: string;
+  emergencyPhone?: string | null;
+  dispatchEmail?: string;
+  address?: string | null;
+  serviceAreas?: string[];
+  businessHours?: BusinessHours;
+  licenseNumber?: string | null;
+  availabilityStatus?: AvailabilityStatus;
+  noticeHeadline?: string | null;
+  noticeBody?: string | null;
+  reopenAt?: string | null;
+  autoResume?: boolean;
+  acceptQuotesWhenUnavailable?: boolean;
+  timezone?: string;
 }
 
 export interface PublicBusinessInfo {
   companyName: string;
   phone: string;
   emergencyPhone: string | null;
-  dispatchEmail: string;
+  address: string | null;
   serviceAreas: string[];
   businessHours: BusinessHours;
   licenseNumber: string | null;
+  availability: PublicAvailabilityInfo;
+  dispatchEmail?: string;
 }
 
 export type OutboxStatus = "pending" | "processing" | "delivered" | "failed";

@@ -151,7 +151,7 @@ Standard session table required by `connect-pg-simple` for Express server-side s
 ---
 
 ### 3.3. `business_settings` Table
-Stores runtime operational settings for the white-labeled deployment. Contains exactly one record per deployment.
+Stores runtime operational settings and availability controls for the white-labeled deployment. Contains exactly one record per deployment.
 
 | Column | Data Type | Nullable | Default | Description |
 | :--- | :--- | :--- | :--- | :--- |
@@ -164,6 +164,13 @@ Stores runtime operational settings for the white-labeled deployment. Contains e
 | `service_areas` | `JSONB` | No | `'[]'::jsonb` | Array of covered cities/counties/zip codes |
 | `business_hours` | `JSONB` | No | `'{}'::jsonb` | Operating schedule object |
 | `license_number` | `VARCHAR(100)` | Yes | `NULL` | State contractor license ID |
+| `availability_status` | `VARCHAR(30)` | No | `'available'` | Availability mode: `'available'`, `'temporarily_unavailable'`, `'unavailable_indefinite'` |
+| `notice_headline` | `VARCHAR(150)` | Yes | `NULL` | Public notice banner headline |
+| `notice_body` | `TEXT` | Yes | `NULL` | Public notice banner body / explanation |
+| `reopen_at` | `TIMESTAMPTZ` | Yes | `NULL` | Scheduled reopening timestamp |
+| `auto_resume` | `BOOLEAN` | No | `false` | Flag to automatically restore available status once `reopen_at` is reached |
+| `accept_quotes_when_unavailable` | `BOOLEAN` | No | `true` | Independent toggle controlling public quote intake during closures |
+| `timezone` | `VARCHAR(50)` | No | `'America/New_York'` | Business IANA timezone identifier for reopening calculations |
 | `created_at` | `TIMESTAMPTZ` | No | `now()` | Initial config creation timestamp |
 | `updated_at` | `TIMESTAMPTZ` | No | `now()` | Last modification timestamp |
 
@@ -290,6 +297,16 @@ Applied via migration `0003_n8n_claim_functions.sql`:
 
 ---
 
+### 3.8. Migration History & Journal
+
+- `0000_nifty_slyde.sql`: Initial schema creation for `users`, `sessions`, `business_settings`, `leads`, and `lead_notes`.
+- `0001_organic_firelord.sql`: Schema hardening and type normalization.
+- `0002_outbox_pattern.sql`: Added `outbox_events` table for resilient asynchronous automation dispatch.
+- `0003_n8n_claim_functions.sql`: Added `n8n_processed_events` table and PostgreSQL locking functions for worker lease and idempotency claims.
+- `0004_business_availability.sql`: Milestone 11 extension adding dynamic business availability columns (`availability_status`, `notice_headline`, `notice_body`, `reopen_at`, `auto_resume`, `accept_quotes_when_unavailable`, `timezone`) to the `business_settings` table.
+
+---
+
 ## 4. Drizzle ORM Schema Blueprint (TypeScript)
 
 ```typescript
@@ -330,6 +347,13 @@ export const businessSettings = pgTable("business_settings", {
   serviceAreas: jsonb("service_areas").notNull().default([]),
   businessHours: jsonb("business_hours").notNull().default({}),
   licenseNumber: varchar("license_number", { length: 100 }),
+  availabilityStatus: varchar("availability_status", { length: 30 }).notNull().default("available"),
+  noticeHeadline: varchar("notice_headline", { length: 150 }),
+  noticeBody: text("notice_body"),
+  reopenAt: timestamp("reopen_at", { withTimezone: true }),
+  autoResume: boolean("auto_resume").notNull().default(false),
+  acceptQuotesWhenUnavailable: boolean("accept_quotes_when_unavailable").notNull().default(true),
+  timezone: varchar("timezone", { length: 50 }).notNull().default("America/New_York"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });

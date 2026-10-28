@@ -29,6 +29,13 @@
       "when": 1793118000000,
       "tag": "0003_n8n_claim_functions",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1793118600000,
+      "tag": "0004_business_availability",
+      "breakpoints": true
     }
   ]
 }

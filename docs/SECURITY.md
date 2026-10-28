@@ -108,6 +108,12 @@ The configuration parser (`parseEnv`) enforces fail-safe assertions when `NODE_E
 - The quote intake collects only information necessary to provide roofing estimates: name, phone, optional email, address, and project notes.
 - Payment details, credit checks, and social security numbers are strictly out-of-scope for the MVP.
 
+### 3.3. Public Information & Operational Privacy Protections
+- **Public API Allowlisting**: The public endpoint [`GET /api/v1/business/public-info`](file:///Users/aljonfernando/Documents/roofing-lead-management-&-automation-system/docs/API_SPECIFICATION.md#22-get-public-business-information) enforces a strict projection allowlist. Internal database keys (`id`), private operational dispatch emails (`dispatchEmail`), and internal timestamps are never returned to public visitors.
+- **Settings Authorization Boundaries**: Administrative business settings (`GET /api/v1/business/settings` and `PATCH /api/v1/business/settings`) require authenticated sessions with `owner` or `admin` role and CSRF header verification. Staff members receive `403 Forbidden`.
+- **Quote Intake Defense**: When quote intake is paused, the policy is enforced server-side in `POST /api/v1/leads`. Submissions are rejected before database transaction creation, preventing spam leads and unneeded outbound email notifications.
+- **Concurrency-Safe Lazy Reopening**: Scheduled reopening transitions execute atomic PostgreSQL updates, ensuring concurrent public requests cannot cause race conditions or inconsistent availability states.
+
 ---
 
 ## 4. Input Validation & Spam Defense
@@ -128,7 +134,7 @@ All inbound payloads must parse through strict **Zod schemas** before reaching c
 ### 4.3. SQL Parameterization & Injection Defense Preflight
 - **Backend Application Queries**: All backend database queries use Drizzle ORM which executes parameterized SQL prepared statements natively. User inputs are never concatenated into raw SQL strings.
 - **n8n Automation Engine Queries**: Every PostgreSQL node within `roofing-lead-notification-workflow.json` (such as atomic claim acquisition, lease verification/renewal, and status completion) passes external and workflow values through positional query parameters (`$1::uuid`, `$2::integer`, `$2::uuid`). Values are bound via the node configuration `options.queryReplacement = "={{ [...] }}"` array bindings, completely eliminating raw template interpolation (`{{ ... }}`) inside SQL execution statements.
-- **Migration & Schema Parity**: All database migrations (`0000` through `0003`) remain strictly idempotent, consistent with Drizzle schema definitions, and encompass stored functions (`acquire_n8n_lead_claim`, `verify_and_renew_n8n_claim`) utilizing row-level locks (`FOR UPDATE`).
+- **Migration & Schema Parity**: All database migrations (`0000` through `0004`) remain strictly idempotent, consistent with Drizzle schema definitions, and encompass stored functions (`acquire_n8n_lead_claim`, `verify_and_renew_n8n_claim`) utilizing row-level locks (`FOR UPDATE`).
 
 ---
 

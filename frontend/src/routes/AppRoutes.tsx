@@ -14,6 +14,7 @@ import { DashboardLayout } from "../components/dashboard/DashboardLayout";
 import { DashboardOverviewPage } from "../pages/DashboardOverviewPage";
 import { LeadsListPage } from "../pages/LeadsListPage";
 import { LeadDetailPage } from "../pages/LeadDetailPage";
+import { BusinessSettingsPage } from "../pages/BusinessSettingsPage";
 import { ProtectedRoute } from "../components/auth/ProtectedRoute";
 
 export interface AppRoutesProps {
@@ -53,6 +54,7 @@ export const AppRoutes: React.FC<AppRoutesProps> = ({
           <Route index element={<DashboardOverviewPage />} />
           <Route path="leads" element={<LeadsListPage />} />
           <Route path="leads/:id" element={<LeadDetailPage />} />
+          <Route path="settings" element={<BusinessSettingsPage />} />
         </Route>
 
         {/* Catch-all Not Found */}

@@ -151,12 +151,20 @@ export async function submitQuoteRequest(
   const data = await response.json().catch(() => null);
 
   if (!response.ok) {
-    // 1. Zod Validation Error (HTTP 422)
-    if (response.status === 422 && data?.error?.details) {
-      throw new ApiValidationError(
-        data.error.message || "One or more input fields are invalid.",
-        data.error.details
-      );
+    // 1. Zod Validation Error (HTTP 422) or Paused Intake
+    if (response.status === 422) {
+      if (data?.error?.code === "QUOTE_INTAKE_PAUSED") {
+        throw new Error(
+          data.error.message ||
+            "Quote requests are temporarily paused. Please contact our office by phone or check back later."
+        );
+      }
+      if (data?.error?.details) {
+        throw new ApiValidationError(
+          data.error.message || "One or more input fields are invalid.",
+          data.error.details
+        );
+      }
     }
 
     // 2. Rate Limit Exceeded (HTTP 429)
